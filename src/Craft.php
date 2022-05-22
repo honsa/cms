@@ -13,12 +13,13 @@ use craft\helpers\App;
 use craft\helpers\ArrayHelper;
 use craft\helpers\Component;
 use craft\helpers\FileHelper;
+use craft\helpers\StringHelper;
 use GuzzleHttp\Client;
 use yii\base\ExitException;
 use yii\db\Expression;
-use yii\helpers\Inflector;
 use yii\helpers\VarDumper;
 use yii\web\Request;
+use function GuzzleHttp\default_user_agent;
 
 /**
  * Craft is helper class serving common Craft and Yii framework functionality.
@@ -31,27 +32,26 @@ use yii\web\Request;
 class Craft extends Yii
 {
     // Edition constants
-    const Solo = 0;
-    const Pro = 1;
-
-    /**
-     * @deprecated in 3.0.0. Use [[Solo]] instead.
-     */
-    const Personal = 0;
-    /**
-     * @deprecated in 3.0.0. Use [[Pro]] instead.
-     */
-    const Client = 1;
+    public const Solo = 0;
+    public const Pro = 1;
 
     /**
      * @var array The default cookie configuration.
      */
-    private static $_baseCookieConfig;
+    private static array $_baseCookieConfig;
 
     /**
-     * @var array Field info for autoload()
+     * @inheritdoc
+     * @template T
+     * @param string|array|callable $type
+     * @phpstan-param class-string<T>|array{class:class-string<T>}|callable():T $type
+     * @param array $params
+     * @return T
      */
-    private static $_fields;
+    public static function createObject($type, array $params = [])
+    {
+        return parent::createObject($type, $params);
+    }
 
     /**
      * Checks if a string references an environment variable (`$VARIABLE_NAME`)
@@ -68,30 +68,34 @@ class Craft extends Yii
      * ```
      *
      * @param string|null $str
-     * @return string|bool|null The parsed value, or the original value if it didn’t
-     * reference an environment variable and/or alias.
+     * @return string|null|false The parsed value, or the original value if it didn’t
+     * reference an environment variable or alias.
      * @since 3.1.0
+     * @deprecated in 3.7.29. [[App::parseEnv()]] should be used instead.
      */
-    public static function parseEnv(string $str = null)
+    public static function parseEnv(?string $str = null): string|null|false
     {
-        if ($str === null) {
-            return null;
-        }
+        return App::parseEnv($str);
+    }
 
-        if (preg_match('/^\$(\w+)$/', $str, $matches)) {
-            $value = App::env($matches[1]);
-            if ($value !== false) {
-                switch (strtolower($value)) {
-                    case 'true':
-                        return true;
-                    case 'false':
-                        return false;
-                }
-                $str = $value;
-            }
-        }
-
-        return static::getAlias($str, false) ?: $str;
+    /**
+     * Checks if a string references an environment variable (`$VARIABLE_NAME`) and returns the referenced
+     * boolean value, or `null` if a boolean value can’t be determined.
+     *
+     * ---
+     *
+     * ```php
+     * $status = Craft::parseBooleanEnv('$SYSTEM_STATUS') ?? false;
+     * ```
+     *
+     * @param mixed $value
+     * @return bool|null
+     * @since 3.7.22
+     * @deprecated in 3.7.29. [[App::parseBooleanEnv()]] should be used instead.
+     */
+    public static function parseBooleanEnv(mixed $value): ?bool
+    {
+        return App::parseBooleanEnv($value);
     }
 
     /**
@@ -101,7 +105,7 @@ class Craft extends Yii
      * @param int $depth The maximum depth that the dumper should go into the variable. Defaults to 10.
      * @param bool $highlight Whether the result should be syntax-highlighted. Defaults to true.
      */
-    public static function dump($var, int $depth = 10, bool $highlight = true)
+    public static function dump(mixed $var, int $depth = 10, bool $highlight = true): void
     {
         VarDumper::dump($var, $depth, $highlight);
     }
@@ -111,10 +115,11 @@ class Craft extends Yii
      *
      * @param mixed $var The variable to be dumped.
      * @param int $depth The maximum depth that the dumper should go into the variable. Defaults to 10.
-     * @param bool $highlight Whether the result should be syntax-highlighted. Defaults to true.
+     * @param bool|null $highlight Whether the result should be syntax-highlighted.
+     * Defaults to `true` for web requests and `false` for console requests.
      * @throws ExitException if the application is in testing mode
      */
-    public static function dd($var, int $depth = 10, bool $highlight = true)
+    public static function dd(mixed $var, int $depth = 10, ?bool $highlight = null): void
     {
         // Turn off output buffering and discard OB contents
         while (ob_get_length() !== false) {
@@ -123,6 +128,10 @@ class Craft extends Yii
             if (@ob_get_clean() === false) {
                 break;
             }
+        }
+
+        if ($highlight === null) {
+            $highlight = !static::$app->getRequest()->getIsConsoleRequest();
         }
 
         VarDumper::dump($var, $depth, $highlight);
@@ -136,9 +145,9 @@ class Craft extends Yii
      * @param Request|null $request The request object
      * @return array The cookie config array.
      */
-    public static function cookieConfig(array $config = [], Request $request = null): array
+    public static function cookieConfig(array $config = [], ?Request $request = null): array
     {
-        if (self::$_baseCookieConfig === null) {
+        if (!isset(self::$_baseCookieConfig)) {
             $generalConfig = static::$app->getConfig()->getGeneral();
 
             if ($generalConfig->useSecureCookies === 'auto') {
@@ -164,15 +173,10 @@ class Craft extends Yii
      * Class autoloader.
      *
      * @param string $className
+     * @phpstan-param class-string $className
      */
-    public static function autoload($className)
+    public static function autoload($className): void
     {
-        // todo: remove this once https://github.com/yiisoft/yii2/issues/18832 is resolved
-        if ($className === Inflector::class) {
-            require dirname(__DIR__) . '/lib/yii2/helpers/Inflector.php';
-            return;
-        }
-
         if ($className === CustomFieldBehavior::class) {
             self::_autoloadCustomFieldBehavior();
         }
@@ -181,13 +185,32 @@ class Craft extends Yii
     /**
      * Autoloads (and possibly generates) `CustomFieldBehavior.php`
      */
-    private static function _autoloadCustomFieldBehavior()
+    private static function _autoloadCustomFieldBehavior(): void
     {
-        $storedFieldVersion = static::$app->getInfo()->fieldVersion;
+        if (!isset(static::$app)) {
+            // Nothing we can do about it yet
+            return;
+        }
+
+        if (!static::$app->getIsInstalled()) {
+            // Just load an empty CustomFieldBehavior into memory
+            self::_generateCustomFieldBehavior([], null, false, true);
+            return;
+        }
+
+        $fieldsService = Craft::$app->getFields();
+        $storedFieldVersion = $fieldsService->getFieldVersion();
         $compiledClassesPath = static::$app->getPath()->getCompiledClassesPath();
+        $fieldVersionExists = $storedFieldVersion !== null;
+
+        if (!$fieldVersionExists) {
+            // Just make up a temporary one
+            $storedFieldVersion = StringHelper::randomString(12);
+        }
+
         $filePath = $compiledClassesPath . DIRECTORY_SEPARATOR . "CustomFieldBehavior_$storedFieldVersion.php";
 
-        if (file_exists($filePath)) {
+        if ($fieldVersionExists && file_exists($filePath)) {
             include $filePath;
             return;
         }
@@ -197,46 +220,54 @@ class Craft extends Yii
         if (empty($fields)) {
             // Write and load it simultaneously since there are no custom fields to worry about
             self::_generateCustomFieldBehavior([], $filePath, true, true);
-            return;
-        }
-
-        // First generate a basic version without real field value types, and load it into memory
-        $fieldHandles = [];
-        foreach ($fields as $field) {
-            $fieldHandles[$field['handle']]['mixed'] = true;
-        }
-        self::_generateCustomFieldBehavior($fieldHandles, $filePath, false, true);
-
-        // Now generate it again, this time with the correct field value types
-        $fieldHandles = [];
-        foreach ($fields as $field) {
-            /** @var FieldInterface|string $fieldClass */
-            $fieldClass = $field['type'];
-            if (Component::validateComponentClass($fieldClass, FieldInterface::class)) {
-                $types = explode('|', $fieldClass::valueType());
-            } else {
-                $types = ['mixed'];
+        } else {
+            // First generate a basic version without real field value types, and load it into memory
+            $fieldHandles = [];
+            foreach ($fields as $field) {
+                $fieldHandles[$field['handle']]['mixed'] = true;
             }
-            foreach ($types as $type) {
-                $type = trim($type, ' \\');
-                // Add a leading `\` if it's not a variable, self-reference, or primitive type
-                if (!preg_match('/^(\$.*|(self|static|bool|boolean|int|integer|float|double|string|array|object|callable|callback|iterable|resource|null|mixed|number|void)(\[\])?)$/i', $type)) {
-                    $type = '\\' . $type;
+            self::_generateCustomFieldBehavior($fieldHandles, $filePath, false, true);
+
+            // Now generate it again, this time with the correct field value types
+            $fieldHandles = [];
+            foreach ($fields as $field) {
+                /** @var FieldInterface|string $fieldClass */
+                $fieldClass = $field['type'];
+                if (Component::validateComponentClass($fieldClass, FieldInterface::class)) {
+                    $types = explode('|', $fieldClass::valueType());
+                } else {
+                    $types = ['mixed'];
                 }
-                $fieldHandles[$field['handle']][$type] = true;
+                foreach ($types as $type) {
+                    $type = trim($type, ' \\');
+                    // Add a leading `\` if it’s not a variable, self-reference, or primitive type
+                    if (!preg_match('/^(\$.*|(self|static|bool|boolean|int|integer|float|double|string|array|object|callable|callback|iterable|resource|null|mixed|number|void)(\[\])?)$/i', $type)) {
+                        $type = '\\' . $type;
+                    }
+                    $fieldHandles[$field['handle']][$type] = true;
+                }
+            }
+            self::_generateCustomFieldBehavior($fieldHandles, $filePath, true, false);
+        }
+
+        // Generate a new field version if we need one
+        if (!$fieldVersionExists) {
+            try {
+                $fieldsService->updateFieldVersion();
+            } catch (Throwable) {
+                // Craft probably isn't installed yet.
             }
         }
-        self::_generateCustomFieldBehavior($fieldHandles, $filePath, true, false);
     }
 
     /**
      * @param array $fieldHandles
-     * @param string $filePath
+     * @param string|null $filePath
      * @param bool $write
      * @param bool $load
      * @throws \yii\base\ErrorException
      */
-    private static function _generateCustomFieldBehavior(array $fieldHandles, string $filePath, bool $write, bool $load)
+    private static function _generateCustomFieldBehavior(array $fieldHandles, ?string $filePath, bool $write, bool $load): void
     {
         $methods = [];
         $handles = [];
@@ -244,25 +275,26 @@ class Craft extends Yii
 
         foreach ($fieldHandles as $handle => $types) {
             $methods[] = <<<EOD
- * @method \$this {$handle}(mixed \$value) Sets the [[{$handle}]] property
+ * @method static $handle(mixed \$value) Sets the [[$handle]] property
 EOD;
 
             $handles[] = <<<EOD
-        '{$handle}' => true,
+        '$handle' => true,
 EOD;
 
             $phpDocTypes = implode('|', array_keys($types));
             $properties[] = <<<EOD
     /**
-     * @var {$phpDocTypes} Value for field with the handle “{$handle}”.
+     * @var $phpDocTypes Value for field with the handle “{$handle}”.
      */
-    public \${$handle};
+    public \$$handle;
 EOD;
         }
 
         // Load the template
-        $fileContents = file_get_contents(static::$app->getBasePath() . DIRECTORY_SEPARATOR . 'behaviors' .
-            DIRECTORY_SEPARATOR . 'CustomFieldBehavior.php.template');
+        $templatePath = static::$app->getBasePath() . DIRECTORY_SEPARATOR . 'behaviors' . DIRECTORY_SEPARATOR . 'CustomFieldBehavior.php.template';
+        FileHelper::invalidate($templatePath);
+        $fileContents = file_get_contents($templatePath);
 
         // Replace placeholders with generated code
         $fileContents = str_replace(
@@ -296,12 +328,12 @@ EOD;
                     $b = basename($path);
                     return (
                         $b !== $basename &&
-                        strpos($b, 'CustomFieldBehavior') === 0 &&
+                        str_starts_with($b, 'CustomFieldBehavior') &&
                         filemtime($path) < $time
                     );
                 },
             ]);
-        } else if ($load) {
+        } elseif ($load) {
             // Just evaluate the code
             eval(preg_replace('/^<\?php\s*/', '', $fileContents));
         }
@@ -312,14 +344,6 @@ EOD;
      */
     private static function _fields(): array
     {
-        if (self::$_fields !== null) {
-            return self::$_fields;
-        }
-
-        if (!static::$app->getIsInstalled()) {
-            return [];
-        }
-
         // Properties are case-sensitive, so get all the binary-unique field handles
         if (static::$app->getDb()->getIsMysql()) {
             $handleColumn = new Expression('binary [[handle]] as [[handle]]');
@@ -328,7 +352,7 @@ EOD;
         }
 
         // Create an array of field handles and their types
-        return self::$_fields = (new Query())
+        return (new Query())
             ->from([Table::FIELDS])
             ->select([$handleColumn, 'type'])
             ->all();
@@ -345,7 +369,7 @@ EOD;
         // Set the Craft header by default.
         $defaultConfig = [
             'headers' => [
-                'User-Agent' => 'Craft/' . static::$app->getVersion() . ' ' . \GuzzleHttp\default_user_agent(),
+                'User-Agent' => 'Craft/' . static::$app->getVersion() . ' ' . default_user_agent(),
             ],
         ];
 

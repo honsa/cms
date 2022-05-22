@@ -20,9 +20,14 @@ use craft\web\View;
 class D3Asset extends AssetBundle
 {
     /**
+     * @inheritdoc
+     */
+    public $sourcePath = __DIR__ . '/dist';
+
+    /**
      * @var array The default language format files to use
      */
-    private $_defaultLanguages = [
+    private array $_defaultLanguages = [
         'ar' => 'ar-SA',
         'de' => 'de-DE',
         'en' => 'en-US',
@@ -33,10 +38,8 @@ class D3Asset extends AssetBundle
     /**
      * @inheritdoc
      */
-    public function init()
+    public function init(): void
     {
-        $this->sourcePath = '@lib/d3';
-
         $this->js = [
             'd3.js',
         ];
@@ -47,7 +50,7 @@ class D3Asset extends AssetBundle
     /**
      * @inheritdoc
      */
-    public function registerAssetFiles($view)
+    public function registerAssetFiles($view): void
     {
         parent::registerAssetFiles($view);
 
@@ -79,7 +82,7 @@ class D3Asset extends AssetBundle
         ];
 
         $js = 'window.d3FormatLocaleDefinition = ' . Json::encode($localeDef) . ";\n" .
-            'window.d3TimeFormatLocaleDefinition = ' . $this->formatDef(Craft::getAlias('@lib/d3-time-format')) . ";\n" .
+            'window.d3TimeFormatLocaleDefinition = ' . $this->formatDef($this->sourcePath . '/d3-time-format/locale') . ";\n" .
             'window.d3Formats = ' . Json::encode(ChartHelper::formats()) . ';';
 
         $view->registerJs($js, View::POS_BEGIN);
@@ -130,7 +133,7 @@ class D3Asset extends AssetBundle
      * @param string $file
      * @return string|null
      */
-    private function _def(string $dir, string $file)
+    private function _def(string $dir, string $file): ?string
     {
         $path = $dir . DIRECTORY_SEPARATOR . $file . '.json';
         return file_exists($path) ? file_get_contents($path) : null;

@@ -29,22 +29,25 @@ interface ElementExporterInterface extends ComponentInterface
      * Sets the element type on the exporter.
      *
      * @param string $elementType
+     * @phpstan-param class-string<ElementInterface> $elementType
      */
-    public function setElementType(string $elementType);
+    public function setElementType(string $elementType): void;
 
     /**
      * Creates the export data for elements fetched with the given element query.
      *
-     * If [[isFormattable()]] returns `true`, then this **must** return an array.
+     * If [[isFormattable()]] returns `true`, then this must return one of the followings:
      *
-     * If [[isFormattable()]] returns `false`, a callable (ideally a
-     * [generator function](https://www.php.net/manual/en/language.generators.overview.php) or a resource can
-     * be returned, which will get streamed out to the browser.
+     * - An array of arrays
+     * - A callable that returns an array of arrays
+     * - A [generator function](https://www.php.net/manual/en/language.generators.overview.php) that yields arrays.
+     *
+     * Otherwise, a string or resource could also be returned.
      *
      * @param ElementQueryInterface $query The element query
      * @return array|string|callable|resource
      */
-    public function export(ElementQueryInterface $query);
+    public function export(ElementQueryInterface $query): mixed;
 
     /**
      * Returns the filename that the export file should have.

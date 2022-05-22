@@ -9,12 +9,12 @@ namespace craft\base;
 
 use Craft;
 use craft\helpers\ArrayHelper;
+use Throwable;
 use yii\base\InvalidConfigException;
 use yii\helpers\VarDumper;
 use yii\log\Target;
 use yii\web\Request;
 use yii\web\Session;
-use yii\web\User;
 
 /**
  * LogTargetTrait implements the common methods and properties for log target classes.
@@ -30,7 +30,7 @@ trait LogTargetTrait
      * @since 3.0.25
      * @see Target::$prefix
      */
-    public $includeUserIp = false;
+    public bool $includeUserIp = false;
 
     /**
      * Returns a string to be prefixed to the given message.
@@ -40,12 +40,12 @@ trait LogTargetTrait
      * The message structure follows that in [[\yii\log\Logger::$messages]].
      * @return string the prefix string
      * @throws InvalidConfigException
-     * @throws \Throwable
+     * @throws Throwable
      * @see Target::getMessagePrefix()
      */
-    public function getMessagePrefix($message)
+    public function getMessagePrefix($message): string
     {
-        if ($this->prefix !== null) {
+        if (isset($this->prefix)) {
             return call_user_func($this->prefix, $message);
         }
 
@@ -60,16 +60,15 @@ trait LogTargetTrait
             $ip = '-';
         }
 
-        /** @var $user User */
-        $user = Craft::$app->has('user', true) ? Craft::$app->get('user') : null;
+        $user = Craft::$app->has('user', true) ? Craft::$app->getUser() : null;
         if ($user && ($identity = $user->getIdentity(false))) {
             $userID = $identity->getId();
         } else {
             $userID = '-';
         }
 
-        /** @var $session Session */
         $session = Craft::$app->has('session', true) ? Craft::$app->get('session') : null;
+        /** @var Session|null $session */
         $sessionID = $session && $session->getIsActive() ? $session->getId() : '-';
 
         return "[$ip][$userID][$sessionID]";
@@ -83,8 +82,22 @@ trait LogTargetTrait
      */
     protected function getContextMessage(): string
     {
-        $context = ArrayHelper::filter($GLOBALS, $this->logVars);
         $result = [];
+
+        if (
+            ($postPos = array_search('_POST', $this->logVars)) !== false &&
+            empty($GLOBALS['_POST']) &&
+            !empty($body = file_get_contents('php://input'))
+        ) {
+            // Log the raw request body instead
+            $logVars = array_merge($this->logVars);
+            array_splice($logVars, $postPos, 1);
+            $result[] = "Request body: $body";
+        } else {
+            $logVars = $this->logVars;
+        }
+
+        $context = ArrayHelper::filter($GLOBALS, $logVars);
 
         // Workaround for codeception testing until these gets addressed:
         // https://github.com/yiisoft/yii-core/issues/49
@@ -94,7 +107,7 @@ trait LogTargetTrait
 
             foreach ($context as $key => $value) {
                 $value = $security->redactIfSensitive($key, $value);
-                $result[] = "\${$key} = " . VarDumper::dumpAsString($value);
+                $result[] = "\$$key = " . VarDumper::dumpAsString($value);
             }
         }
 

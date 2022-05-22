@@ -32,20 +32,20 @@ class SystemMessagesAsset extends AssetBundle
      * @inheritdoc
      */
     public $css = [
-        'system_messages.css',
+        'css/system_messages.css',
     ];
 
     /**
      * @inheritdoc
      */
     public $js = [
-        'system_messages.min.js',
+        'system_messages.js',
     ];
 
     /**
      * @inheritdoc
      */
-    public function registerAssetFiles($view)
+    public function registerAssetFiles($view): void
     {
         parent::registerAssetFiles($view);
 

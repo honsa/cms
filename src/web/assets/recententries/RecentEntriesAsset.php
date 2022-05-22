@@ -32,13 +32,13 @@ class RecentEntriesAsset extends AssetBundle
      * @inheritdoc
      */
     public $js = [
-        'RecentEntriesWidget.min.js',
+        'RecentEntriesWidget.js',
     ];
 
     /**
      * @inheritdoc
      */
-    public function registerAssetFiles($view)
+    public function registerAssetFiles($view): void
     {
         parent::registerAssetFiles($view);
 

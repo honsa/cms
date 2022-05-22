@@ -32,20 +32,20 @@ class UpdatesAsset extends AssetBundle
      * @inheritdoc
      */
     public $css = [
-        'updates.css',
+        'css/UpdatesUtility.css',
     ];
 
     /**
      * @inheritdoc
      */
     public $js = [
-        'UpdatesUtility.min.js',
+        'UpdatesUtility.js',
     ];
 
     /**
      * @inheritdoc
      */
-    public function registerAssetFiles($view)
+    public function registerAssetFiles($view): void
     {
         parent::registerAssetFiles($view);
 

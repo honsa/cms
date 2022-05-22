@@ -27,12 +27,12 @@ class PruneProvisionalDraftsController extends Controller
     /**
      * @var bool Whether this is a dry run.
      */
-    public $dryRun = false;
+    public bool $dryRun = false;
 
     /**
      * @inheritdoc
      */
-    public function options($actionID)
+    public function options($actionID): array
     {
         $options = parent::options($actionID);
         $options[] = 'dryRun';
@@ -92,9 +92,9 @@ class PruneProvisionalDraftsController extends Controller
                 ->provisionalDrafts()
                 ->draftOf($element['id'])
                 ->draftCreator($element['creatorId'])
-                ->siteId('*')
+                ->site('*')
                 ->unique()
-                ->anyStatus()
+                ->status(null)
                 ->orderBy(['dateUpdated' => SORT_DESC])
                 ->offset(1)
                 ->all();

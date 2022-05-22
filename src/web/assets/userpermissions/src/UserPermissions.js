@@ -1,67 +1,74 @@
-(function($) {
-    /** global: Craft */
-    /** global: Garnish */
-    Craft.UserPermissions = Garnish.Base.extend({
-        $wrapper: null,
-        $selectAllBtn: null,
-        $allCheckboxes: null,
+import './user-permissions.scss';
 
-        init: function(wrapper) {
-            this.$wrapper = wrapper;
-            this.$selectAllBtn = $('.select-all', this.$wrapper);
-            this.$allCheckboxes = $('input[type=checkbox]:not(.group-permission)', this.$wrapper);
+(function ($) {
+  /** global: Craft */
+  /** global: Garnish */
+  Craft.UserPermissions = Garnish.Base.extend({
+    $wrapper: null,
+    $selectAllBtn: null,
+    $allCheckboxes: null,
 
-            this.addListener(this.$selectAllBtn, 'click', 'toggleSelectAll');
-            this.addListener(this.$allCheckboxes, 'click', 'toggleCheckbox');
-            this.updateSelectAllBtn();
-        },
+    init: function (wrapper) {
+      this.$wrapper = wrapper;
+      this.$selectAllBtn = $('.select-all', this.$wrapper);
+      this.$allCheckboxes = $(
+        'input[type=checkbox]:not(.group-permission)',
+        this.$wrapper
+      );
 
-        toggleSelectAll: function(ev) {
-            if (this.canSelectAll()) {
-                this.$allCheckboxes.filter(':not(:checked)').trigger('click');
-            } else {
-                this.$allCheckboxes.filter(':checked').trigger('click');
-            }
+      this.addListener(this.$selectAllBtn, 'click', 'toggleSelectAll');
+      this.addListener(this.$allCheckboxes, 'click', 'toggleCheckbox');
+      this.updateSelectAllBtn();
+    },
 
-            ev.preventDefault();
-        },
+    toggleSelectAll: function (ev) {
+      if (this.canSelectAll()) {
+        this.$allCheckboxes.filter(':not(:checked)').trigger('click');
+      } else {
+        this.$allCheckboxes.filter(':checked').trigger('click');
+      }
 
-        toggleCheckbox: function(ev) {
-            let $checkbox = $(ev.currentTarget);
-            if ($checkbox.prop('disabled')) {
-                ev.preventDefault();
-                return;
-            }
+      ev.preventDefault();
+    },
 
-            let $uls = $checkbox.parent('li').find('> ul');
-            let $childrenCheckboxes = $checkbox.parent('li').find('> ul > li > input[type=checkbox]:not(.group-permission)');
+    toggleCheckbox: function (ev) {
+      let $checkbox = $(ev.currentTarget);
+      if ($checkbox.prop('disabled')) {
+        ev.preventDefault();
+        return;
+      }
 
-            if ($checkbox.prop('checked')) {
-                $childrenCheckboxes.prop('disabled', false);
-            } else {
-                $childrenCheckboxes.filter(':checked').trigger('click');
-                $childrenCheckboxes.prop('disabled', true);
-            }
+      let $uls = $checkbox.parent('li').find('> ul');
+      let $childrenCheckboxes = $checkbox
+        .parent('li')
+        .find('> ul > li > input[type=checkbox]:not(.group-permission)');
 
-            this.updateSelectAllBtn();
-        },
+      if ($checkbox.prop('checked')) {
+        $childrenCheckboxes.prop('disabled', false);
+      } else {
+        $childrenCheckboxes.filter(':checked').trigger('click');
+        $childrenCheckboxes.prop('disabled', true);
+      }
 
-        updateSelectAllBtn: function() {
-            if (this.canSelectAll()) {
-                this.$selectAllBtn.text(Craft.t('app', 'Select All'));
-            } else {
-                this.$selectAllBtn.text(Craft.t('app', 'Deselect All'));
-            }
-        },
+      this.updateSelectAllBtn();
+    },
 
-        canSelectAll: function() {
-            return !!this.$allCheckboxes.filter(':not(:checked)').length;
-        }
-    });
+    updateSelectAllBtn: function () {
+      if (this.canSelectAll()) {
+        this.$selectAllBtn.text(Craft.t('app', 'Select All'));
+      } else {
+        this.$selectAllBtn.text(Craft.t('app', 'Deselect All'));
+      }
+    },
 
-    var userPermissions = $('.user-permissions');
+    canSelectAll: function () {
+      return !!this.$allCheckboxes.filter(':not(:checked)').length;
+    },
+  });
 
-    $.each(userPermissions, function() {
-        new Craft.UserPermissions(this);
-    });
+  var userPermissions = $('.user-permissions');
+
+  $.each(userPermissions, function () {
+    new Craft.UserPermissions(this);
+  });
 })(jQuery);

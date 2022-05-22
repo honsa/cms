@@ -1,29 +1,43 @@
 <?php
+/**
+ * @link https://craftcms.com/
+ * @copyright Copyright (c) Pixel & Tonic, Inc.
+ * @license https://craftcms.github.io/license/
+ */
 
+namespace crafttests;
+
+use craft\helpers\App;
 use PHPUnit\Framework\TestCase;
 
 class CraftTest extends TestCase
 {
-    public function testParseEnv()
+    /**
+     *
+     */
+    public function testParseEnv(): void
     {
         // Arrange
-        putenv("CRAFT_TEST=testing");
+        putenv('CRAFT_TEST=testing');
 
         // Act
-        $env = Craft::parseEnv('$CRAFT_TEST');
+        $env = App::parseEnv('$CRAFT_TEST');
 
         // Assert
         $this->assertEquals('testing', $env);
         putenv('CRAFT_TEST');
     }
 
-    public function testParseEnvReturnsTrue()
+    /**
+     *
+     */
+    public function testParseEnvReturnsTrue(): void
     {
         // Arrange
-        putenv("CRAFT_TEST=true");
+        putenv('CRAFT_TEST=true');
 
         // Act
-        $env = Craft::parseEnv('$CRAFT_TEST');
+        $env = App::parseEnv('$CRAFT_TEST');
 
         // Assert
         $this->assertEquals(true, $env);
@@ -31,13 +45,16 @@ class CraftTest extends TestCase
         putenv('CRAFT_TEST');
     }
 
-    public function testParseEnvReturnsFalse()
+    /**
+     *
+     */
+    public function testParseEnvReturnsFalse(): void
     {
         // Arrange
-        putenv("CRAFT_TEST=false");
+        putenv('CRAFT_TEST=false');
 
         // Act
-        $env = Craft::parseEnv('$CRAFT_TEST');
+        $env = App::parseEnv('$CRAFT_TEST');
 
         // Assert
         $this->assertEquals(false, $env);

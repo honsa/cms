@@ -14,8 +14,8 @@ use craft\db\Table;
 use craft\elements\User;
 use craft\helpers\ArrayHelper;
 use craft\services\Search;
+use craft\test\TestCase;
 use crafttests\fixtures\UserFixture;
-use UnitTester;
 
 /**
  * Unit tests for the search service
@@ -23,67 +23,48 @@ use UnitTester;
  * @todo There are MySQL and PostgreSQL specific search tests that need to be performed.
  *
  * Searching and some of the commands run in this test are documented here:
- * https://craftcms.com/docs/3.x/searching.html
+ * https://craftcms.com/docs/4.x/searching.html
  *
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @author Global Network Group | Giel Tettelaar <giel@yellowflash.net>
  * @since 3.2
  */
-class SearchTest extends Unit
+class SearchTest extends TestCase
 {
-    /**
-     * @var UnitTester
-     */
-    protected $tester;
-
     /**
      * @var Search
      */
-    protected $search;
+    protected Search $search;
 
     public function _fixtures(): array
     {
         return [
             'users' => [
                 'class' => UserFixture::class,
-            ]
+            ],
         ];
     }
 
     /**
-     * @dataProvider filterElementIdByQueryDataProvider
-     *
-     * @param $usernameOrEmailsForResult
-     * @param $usernameOrEmailsForQuery
-     * @param $query
-     * @param bool $scoreResults
-     * @param null $siteId
-     * @param bool $returnScores
+     * @dataProvider searchElementsDataProvider
+     * @param array $usernameOrEmailsForResult
+     * @param array $usernameOrEmailsForQuery
+     * @param string $searchQuery
      */
-    public function testFilterElementIdsByQuery($usernameOrEmailsForResult, $usernameOrEmailsForQuery, $query, $scoreResults = true, $siteId = null, $returnScores = false)
+    public function testSearchElements(array $usernameOrEmailsForResult, array $usernameOrEmailsForQuery, string $searchQuery): void
     {
         // Repackage the dataProvider data into something that can be used by the filter function
         $result = $this->_usernameEmailArrayToIdList($usernameOrEmailsForResult);
-        $forQuery = $this->_usernameEmailArrayToIdList($usernameOrEmailsForQuery);
+        $elementIds = $this->_usernameEmailArrayToIdList($usernameOrEmailsForQuery);
+        $elementQuery = User::find()
+            ->id($elementIds ?: null)
+            ->search($searchQuery);
 
         // Filter them
-        $filtered = $this->search->filterElementIdsByQuery($forQuery, $query, $scoreResults, $siteId, $returnScores);
+        $filtered = array_keys($this->search->searchElements($elementQuery));
 
         sort($result, SORT_NUMERIC);
         sort($filtered, SORT_NUMERIC);
-
-        self::assertSame($result, $filtered);
-    }
-
-    /**
-     *
-     */
-    public function testElementQueryReturnsInt()
-    {
-        $result = $this->_usernameEmailArrayToIdList(['user1', 'user2', 'user3'], true);
-        $forQuery = $this->_usernameEmailArrayToIdList(['user1', 'user2', 'user3'], false);
-
-        $filtered = $this->search->filterElementIdsByQuery($forQuery, 'user');
 
         self::assertSame($result, $filtered);
     }
@@ -93,15 +74,16 @@ class SearchTest extends Unit
      *
      * @todo test with fields and multisite using entries
      */
-    public function testIndexElementAttributes()
+    public function testIndexElementAttributes(): void
     {
         // Create a user
         $user = new User();
+        $user->active = true;
         $user->username = 'testIndexElementAttributes1';
         $user->email = 'testIndexElementAttributes1@test.com';
-        $user->firstName = 'john smith';
-        $user->lastName = 'WIL K ER SON!';
-        $user->id = '666';
+        $user->firstName = 'john';
+        $user->lastName = 'wilkerson';
+        $user->id = 1;
 
         // Index them.
         $this->search->indexElementAttributes($user);
@@ -110,9 +92,8 @@ class SearchTest extends Unit
         $searchIndex = (new Query())->from([Table::SEARCHINDEX])->where(['elementId' => $user->id])->all();
 
         self::assertSame(' testindexelementattributes1 test com ', $this->_getSearchIndexValueByAttribute('email', $searchIndex));
-        self::assertSame(' john smith ', $this->_getSearchIndexValueByAttribute('firstname', $searchIndex));
-        self::assertSame(' wil k er son ', $this->_getSearchIndexValueByAttribute('lastname', $searchIndex));
-        self::assertSame(' john smith wil k er son ', $this->_getSearchIndexValueByAttribute('fullname', $searchIndex));
+        self::assertSame(' john ', $this->_getSearchIndexValueByAttribute('firstname', $searchIndex));
+        self::assertSame(' wilkerson ', $this->_getSearchIndexValueByAttribute('lastname', $searchIndex));
     }
 
     /**
@@ -120,31 +101,31 @@ class SearchTest extends Unit
      *
      * @return array
      */
-    public function filterElementIdByQueryDataProvider(): array
+    public function searchElementsDataProvider(): array
     {
         return [
-            [['user1'], ['user1', 'user2', 'user3', 'user4'], 'user1@crafttest.com', true, 1, false],
+            [['user1'], ['user1', 'user2', 'user3', 'user4'], 'user1@crafttest.com'],
 
-            [['user4', 'user1', 'user2', 'user3'], ['user1', 'user2', 'user3', 'user4'], 'user', true, 1, false],
-            [['user4', 'user1', 'user2', 'user3'], [], 'user', true, 1, false],
-            [['user1', 'user2', 'user3'], ['user1', 'user2', 'user3'], 'user', true, 1, false],
-            [['user4'], ['user1', 'user2', 'user3', 'user4'], 'user someemail', true, 1, false],
-            [[], ['user1', 'user2', 'user3'], 'user someemail', true, 1, false],
+            [['user4', 'user1', 'user2', 'user3'], ['user1', 'user2', 'user3', 'user4'], 'user'],
+            [['user4', 'user1', 'user2', 'user3'], [], 'user'],
+            [['user1', 'user2', 'user3'], ['user1', 'user2', 'user3'], 'user'],
+            [['user4'], ['user1', 'user2', 'user3', 'user4'], 'user someemail'],
+            [[], ['user1', 'user2', 'user3'], 'user someemail'],
 
             // This should work. If you want an empty slug you should try: -slug:*
-            [[], ['user1', 'user2', 'user3', 'user4'], 'slug:', true, 1, false],
-            [[], ['user1', 'user2', 'user3', 'user4'], 'slug:""', true, 1, false],
+            [[], ['user1', 'user2', 'user3', 'user4'], 'slug:'],
+            [[], ['user1', 'user2', 'user3', 'user4'], 'slug:""'],
 
             // User4 goes first as it has both user and someemail keywords
-            [['user4', 'user1', 'user2', 'user3'], ['user1', 'user2', 'user3', 'user4'], 'user OR someemail', true, 1, false],
-            [['user4', 'user1'], ['user1', 'user2', 'user3', 'user4'], 'someemail OR -firstname:*', true, 1, false],
+            [['user4', 'user1', 'user2', 'user3'], ['user1', 'user2', 'user3', 'user4'], 'user OR someemail'],
+            [['user4', 'user1'], ['user1', 'user2', 'user3', 'user4'], 'someemail OR -firstname:*'],
         ];
     }
 
     /**
      * @inheritdoc
      */
-    protected function _before()
+    protected function _before(): void
     {
         parent::_before();
 
@@ -154,7 +135,7 @@ class SearchTest extends Unit
     /**
      * @inheritDoc
      */
-    protected function _after()
+    protected function _after(): void
     {
         parent::_after();
 
@@ -168,11 +149,11 @@ class SearchTest extends Unit
     }
 
     /**
-     * @param $attributeName
-     * @param $searchIndex
+     * @param mixed $attributeName
+     * @param iterable $searchIndex
      * @return string
      */
-    private function _getSearchIndexValueByAttribute($attributeName, $searchIndex): string
+    private function _getSearchIndexValueByAttribute(mixed $attributeName, iterable $searchIndex): string
     {
         foreach (ArrayHelper::where($searchIndex, 'attribute', $attributeName) as $array) {
             if (isset($array['keywords'])) {
@@ -191,21 +172,13 @@ class SearchTest extends Unit
     private function _usernameEmailArrayToIdList(array $usernameOrEmails, bool $typecastToInt = true): array
     {
         $ids = [];
+        $usersService = Craft::$app->getUsers();
 
         foreach ($usernameOrEmails as $usernameOrEmail) {
-            $userId = $this->_getUserIdByEmailOrUserName($usernameOrEmail)->id;
+            $userId = $usersService->getUserByUsernameOrEmail($usernameOrEmail)->id;
             $ids[] = $typecastToInt === true ? (int)$userId : $userId;
         }
 
         return $ids;
-    }
-
-    /**
-     * @param string $emailOrUsername
-     * @return User|null
-     */
-    private function _getUserIdByEmailOrUserName(string $emailOrUsername): ?User
-    {
-        return Craft::$app->getUsers()->getUserByUsernameOrEmail($emailOrUsername);
     }
 }

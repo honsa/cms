@@ -32,13 +32,13 @@ class MatrixSettingsAsset extends AssetBundle
      * @inheritdoc
      */
     public $js = [
-        'MatrixConfigurator.min.js',
+        'MatrixConfigurator.js',
     ];
 
     /**
      * @inheritdoc
      */
-    public function registerAssetFiles($view)
+    public function registerAssetFiles($view): void
     {
         parent::registerAssetFiles($view);
 

@@ -20,13 +20,13 @@ class Search
     /**
      * Normalizes search keywords.
      *
-     * @param string[]|string $str The dirty keywords
+     * @param string|string[] $str The dirty keywords
      * @param array $ignore Ignore words to strip out
      * @param bool $processCharMap Whether to remove punctuation and diacritics (default is true)
-     * @param string|null The language that the character map should be based on, if `$processCharMap` is `true`.
+     * @param string|null $language The language that the character map should be based on, if `$processCharMap` is `true`.
      * @return string The cleansed keywords.
      */
-    public static function normalizeKeywords($str, array $ignore = [], bool $processCharMap = true, ?string $language = null): string
+    public static function normalizeKeywords(array|string $str, array $ignore = [], bool $processCharMap = true, ?string $language = null): string
     {
         // Flatten
         if (is_array($str)) {
@@ -41,6 +41,9 @@ class Search
 
         // Get rid of entities
         $str = preg_replace('/&#?[a-z0-9]{2,8};/i', '', $str);
+
+        // Get rid of emoji
+        $str = StringHelper::replaceMb4($str, '');
 
         // Normalize to lowercase
         $str = mb_strtolower($str);
@@ -57,7 +60,7 @@ class Search
         if (is_array($ignore) && !empty($ignore)) {
             foreach ($ignore as $word) {
                 $word = preg_quote(static::normalizeKeywords($word, [], true, $language), '/');
-                $str = preg_replace("/\b{$word}\b/u", '', $str);
+                $str = preg_replace("/\b$word\b/u", '', $str);
             }
         }
 

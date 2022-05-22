@@ -86,7 +86,28 @@ class Entry extends Mutation
             if ($createDraftMutations) {
                 $mutationList['createDraft'] = [
                     'name' => 'createDraft',
-                    'args' => ['id' => Type::nonNull(Type::int())],
+                    'args' => [
+                        'id' => [
+                            'name' => 'id',
+                            'type' => Type::nonNull(Type::int()),
+                            'description' => 'The id for the entry to create the draft for.',
+                        ],
+                        'name' => [
+                            'name' => 'name',
+                            'type' => Type::string(),
+                            'description' => 'The name of the draft',
+                        ],
+                        'notes' => [
+                            'name' => 'notes',
+                            'type' => Type::string(),
+                            'description' => 'Draft notes',
+                        ],
+                        'provisional' => [
+                            'name' => 'provisional',
+                            'type' => Type::boolean(),
+                            'description' => 'Whether the draft should be a provisional draft or not.',
+                        ],
+                    ],
                     'resolve' => [$resolver, 'createDraft'],
                     'description' => 'Create a draft for an entry and return the draft ID.',
                     'type' => Type::id(),
@@ -94,7 +115,18 @@ class Entry extends Mutation
 
                 $mutationList['publishDraft'] = [
                     'name' => 'publishDraft',
-                    'args' => ['id' => Type::nonNull(Type::int())],
+                    'args' => [
+                        'id' => [
+                            'name' => 'id',
+                            'type' => Type::nonNull(Type::int()),
+                            'description' => 'The id of the draft to be published.',
+                        ],
+                        'provisional' => [
+                            'name' => 'provisional',
+                            'type' => Type::boolean(),
+                            'description' => 'Whether the draft is a provisional draft.',
+                        ],
+                    ],
                     'resolve' => [$resolver, 'publishDraft'],
                     'description' => 'Publish a draft for the entry and return the entry ID.',
                     'type' => Type::id(),
@@ -109,6 +141,7 @@ class Entry extends Mutation
      * Create the per-entry-type save mutations.
      *
      * @param EntryTypeModel $entryType
+     * @param bool $createSaveDraftMutation
      * @return array
      * @throws InvalidConfigException
      */
@@ -123,11 +156,12 @@ class Entry extends Mutation
 
         $section = $entryType->getSection();
 
+        /** @var EntryMutationResolver $resolver */
         $resolver = Craft::createObject(EntryMutationResolver::class);
         $resolver->setResolutionData('entryType', $entryType);
         $resolver->setResolutionData('section', $section);
 
-        static::prepareResolver($resolver, $entryType->getFields());
+        static::prepareResolver($resolver, $entryType->getCustomFields());
 
         switch ($section->type) {
             case Section::TYPE_SINGLE:
@@ -139,6 +173,7 @@ class Entry extends Mutation
                 break;
             case Section::TYPE_STRUCTURE:
                 $entryMutationArguments = array_merge($entryMutationArguments, StructureArguments::getArguments());
+            // no break
             default:
                 $description = 'Save a “' . $entryType->name . '” entry in the “' . $section->name . '” section.';
                 $draftDescription = 'Save a “' . $entryType->name . '” entry draft in the “' . $section->name . '” section.';

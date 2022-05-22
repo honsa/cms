@@ -10,14 +10,15 @@ namespace crafttests\unit\web;
 use Codeception\Test\Unit;
 use Craft;
 use craft\test\mockclasses\controllers\TestController;
+use craft\test\TestCase;
 use craft\test\TestSetup;
 use craft\web\Response;
+use craft\web\TemplateResponseFormatter;
 use craft\web\View;
 use UnitTester;
 use yii\base\Action;
 use yii\base\Exception;
 use yii\base\InvalidConfigException;
-use yii\base\InvalidRouteException;
 use yii\web\BadRequestHttpException;
 use yii\web\ForbiddenHttpException;
 
@@ -28,22 +29,22 @@ use yii\web\ForbiddenHttpException;
  * @author Global Network Group | Giel Tettelaar <giel@yellowflash.net>
  * @since 3.2
  */
-class ControllerTest extends Unit
+class ControllerTest extends TestCase
 {
     /**
      * @var UnitTester
      */
-    protected $tester;
+    protected UnitTester $tester;
 
     /**
      * @var TestController
      */
-    private $controller;
+    private TestController $controller;
 
     /**
      *
      */
-    public function testBeforeAction()
+    public function testBeforeAction(): void
     {
         Craft::$app->getConfig()->getGeneral()->isSystemLive = true;
 
@@ -56,34 +57,19 @@ class ControllerTest extends Unit
     }
 
     /**
-     * @throws InvalidRouteException
-     */
-    public function testRunActionJsonError()
-    {
-        // We accept JSON.
-        Craft::$app->getRequest()->setAcceptableContentTypes(['application/json' => true]);
-        Craft::$app->getRequest()->headers->set('Accept', 'application/json');
-
-        /* @var Response $resp */
-        $resp = $this->controller->runAction('me-dont-exist');
-
-        // As long as this is set. We can expect yii to do its thing.
-        self::assertSame(Response::FORMAT_JSON, $resp->format);
-    }
-
-    /**
      * @throws Exception
      */
-    public function testTemplateRendering()
+    public function testTemplateRendering(): void
     {
         // We need to render a template from the site dir.
         Craft::$app->getView()->setTemplateMode(View::TEMPLATE_MODE_SITE);
 
         $response = $this->controller->renderTemplate('template');
+        (new TemplateResponseFormatter())->format($response);
 
         // Again. If this is all good. We can expect Yii to do its thing.
-        self::assertSame('Im a template!', $response->data);
-        self::assertSame(Response::FORMAT_RAW, $response->format);
+        self::assertSame('Im a template!', $response->content);
+        self::assertSame(TemplateResponseFormatter::FORMAT, $response->format);
         self::assertSame('text/html; charset=UTF-8', $response->getHeaders()->get('content-type'));
     }
 
@@ -92,17 +78,18 @@ class ControllerTest extends Unit
      *
      * @throws Exception
      */
-    public function testTemplateRenderingIfHeadersAlreadySet()
+    public function testTemplateRenderingIfHeadersAlreadySet(): void
     {
         // We need to render a template from the site dir.
         Craft::$app->getView()->setTemplateMode(View::TEMPLATE_MODE_SITE);
         Craft::$app->getResponse()->getHeaders()->set('content-type', 'HEADERS');
 
         $response = $this->controller->renderTemplate('template');
+        (new TemplateResponseFormatter())->format($response);
 
         // Again. If this is all good. We can expect Yii to do its thing.
-        self::assertSame('Im a template!', $response->data);
-        self::assertSame(Response::FORMAT_RAW, $response->format);
+        self::assertSame('Im a template!', $response->content);
+        self::assertSame(TemplateResponseFormatter::FORMAT, $response->format);
         self::assertSame('HEADERS', $response->getHeaders()->get('content-type'));
     }
 
@@ -111,7 +98,7 @@ class ControllerTest extends Unit
      * @throws InvalidConfigException
      * @throws BadRequestHttpException
      */
-    public function testRedirectToPostedUrl()
+    public function testRedirectToPostedUrl(): void
     {
         $redirect = Craft::$app->getSecurity()->hashData('craft/do/stuff');
 
@@ -130,7 +117,7 @@ class ControllerTest extends Unit
     /**
      * @throws BadRequestHttpException
      */
-    public function testRedirectToPostedWithSetDefault()
+    public function testRedirectToPostedWithSetDefault(): void
     {
         $withDefault = $this->controller->redirectToPostedUrl(null, 'craft/do/stuff');
         self::assertSame(TestSetup::SITE_URL . 'craft/do/stuff', $withDefault->headers->get('Location'));
@@ -139,7 +126,7 @@ class ControllerTest extends Unit
     /**
      *
      */
-    public function testAsJsonP()
+    public function testAsJsonP(): void
     {
         $result = $this->controller->asJsonP(['test' => 'test']);
         self::assertSame(Response::FORMAT_JSONP, $result->format);
@@ -149,7 +136,7 @@ class ControllerTest extends Unit
     /**
      *
      */
-    public function testAsRaw()
+    public function testAsRaw(): void
     {
         $result = $this->controller->asRaw(['test' => 'test']);
         self::assertSame(Response::FORMAT_RAW, $result->format);
@@ -159,7 +146,7 @@ class ControllerTest extends Unit
     /**
      *
      */
-    public function testAsErrorJson()
+    public function testAsErrorJson(): void
     {
         $result = $this->controller->asErrorJson('im an error');
         self::assertSame(Response::FORMAT_JSON, $result->format);
@@ -169,7 +156,7 @@ class ControllerTest extends Unit
     /**
      *
      */
-    public function testRedirect()
+    public function testRedirect(): void
     {
         self::assertSame(TestSetup::SITE_URL . 'do/stuff', $this->controller->redirect('do/stuff')->headers->get('Location'));
 
@@ -192,7 +179,7 @@ class ControllerTest extends Unit
     /**
      * @inheritdoc
      */
-    protected function _before()
+    protected function _before(): void
     {
         parent::_before();
         $_SERVER['REQUEST_URI'] = 'https://craftcms.com/admin/dashboard';

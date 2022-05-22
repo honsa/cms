@@ -1,81 +1,102 @@
-(function($) {
-    /** global: Craft */
-    /** global: Garnish */
-    /**
-     * Deprecator class
-     */
-    var Deprecator = Garnish.Base.extend({
-        $clearAllBtn: null,
-        $table: null,
-        tracesModal: null,
-        $tracesModalBody: null,
+import './deprecator.scss';
 
-        init: function() {
-            this.$clearAllBtn = $('#clearall');
-            this.$table = $('#deprecationerrors');
-            this.$noLogsMessage = $('#nologs');
+(function ($) {
+  /** global: Craft */
+  /** global: Garnish */
+  /**
+   * Deprecator class
+   */
+  var Deprecator = Garnish.Base.extend({
+    $clearAllBtn: null,
+    $table: null,
+    tracesModal: null,
+    $tracesModalBody: null,
 
-            this.addListener(this.$clearAllBtn, 'click', 'clearAllLogs');
-            this.addListener(this.$table.find('.viewtraces'), 'click', 'viewLogTraces');
-            this.addListener(this.$table.find('.delete'), 'click', 'deleteLog');
-        },
+    init: function () {
+      this.$clearAllBtn = $('#clearall');
+      this.$table = $('#deprecationerrors');
+      this.$noLogsMessage = $('#nologs');
 
-        clearAllLogs: function() {
-            Craft.postActionRequest('utilities/delete-all-deprecation-errors');
-            this.onClearAll();
-        },
+      this.addListener(this.$clearAllBtn, 'click', 'clearAllLogs');
+      this.addListener(
+        this.$table.find('.viewtraces'),
+        'click',
+        'viewLogTraces'
+      );
+      this.addListener(this.$table.find('.delete'), 'click', 'deleteLog');
+    },
 
-        viewLogTraces: function(ev) {
-            if (!this.tracesModal) {
-                var $container = $('<div id="traces" class="modal loading"/>').appendTo(Garnish.$bod);
-                this.$tracesModalBody = $('<div class="body" tabindex="0"/>').appendTo($container);
+    clearAllLogs: function () {
+      Craft.sendActionRequest(
+        'POST',
+        'utilities/delete-all-deprecation-errors'
+      );
+      this.onClearAll();
+    },
 
-                this.tracesModal = new Garnish.Modal($container, {
-                    resizable: true
-                });
-            } else {
-                this.tracesModal.$container.addClass('loading');
-                this.$tracesModalBody.empty();
-                this.tracesModal.show();
-            }
+    viewLogTraces: function (ev) {
+      const $spinner = $('<div class="spinner spinner-absolute"/>');
+      if (!this.tracesModal) {
+        var $container = $('<div id="traces" class="modal"/>')
+          .append($spinner)
+          .appendTo(Garnish.$bod);
+        this.$tracesModalBody = $('<div class="body" tabindex="0"/>').appendTo(
+          $container
+        );
 
-            var data = {
-                logId: $(ev.currentTarget).closest('tr').data('id')
-            };
+        this.tracesModal = new Garnish.Modal($container, {
+          resizable: true,
+        });
+      } else {
+        this.tracesModal.$container.append($spinner);
+        this.$tracesModalBody.empty();
+        this.tracesModal.show();
+      }
 
-            Craft.postActionRequest('utilities/get-deprecation-error-traces-modal', data, (response, textStatus) => {
-                this.tracesModal.$container.removeClass('loading');
+      var data = {
+        logId: $(ev.currentTarget).closest('tr').data('id'),
+      };
 
-                if (textStatus === 'success') {
-                    this.$tracesModalBody.html(response.html);
-                }
-            });
-        },
+      Craft.sendActionRequest(
+        'POST',
+        'utilities/get-deprecation-error-traces-modal',
+        {data}
+      )
+        .then((response) => {
+          this.tracesModal.$container.find('.spinner').remove();
+          this.$tracesModalBody.html(response.data.html);
+        })
+        .catch(({response}) => {
+          this.tracesModal.$container.find('.spinner').remove();
+        });
+    },
 
-        deleteLog: function(ev) {
-            var $tr = $(ev.currentTarget).closest('tr');
+    deleteLog: function (ev) {
+      var $tr = $(ev.currentTarget).closest('tr');
 
-            var data = {
-                logId: $tr.data('id')
-            };
+      var data = {
+        logId: $tr.data('id'),
+      };
 
-            Craft.postActionRequest('utilities/delete-deprecation-error', data, function(response, textStatus) {
-                console.log('response/textStatus', response, textStatus);
-            });
+      Craft.sendActionRequest('POST', 'utilities/delete-deprecation-error', {
+        data,
+      }).finally(() => {
+        console.log('response', response);
+      });
 
-            if ($tr.siblings().length) {
-                $tr.remove();
-            } else {
-                this.onClearAll();
-            }
-        },
+      if ($tr.siblings().length) {
+        $tr.remove();
+      } else {
+        this.onClearAll();
+      }
+    },
 
-        onClearAll: function() {
-            this.$clearAllBtn.parent().remove();
-            this.$table.remove();
-            this.$noLogsMessage.removeClass('hidden');
-        }
-    });
+    onClearAll: function () {
+      this.$clearAllBtn.parent().remove();
+      this.$table.remove();
+      this.$noLogsMessage.removeClass('hidden');
+    },
+  });
 
-    new Deprecator();
+  new Deprecator();
 })(jQuery);

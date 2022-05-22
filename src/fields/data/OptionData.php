@@ -20,23 +20,23 @@ class OptionData implements Serializable
     /**
      * @var string|null
      */
-    public $label;
+    public ?string $label = null;
 
     /**
      * @var string|null
      */
-    public $value;
+    public ?string $value = null;
 
     /**
-     * @var bool|null
+     * @var bool
      */
-    public $selected;
+    public bool $selected;
 
     /**
      * @var bool
      * @since 3.5.10
      */
-    public $valid;
+    public bool $valid;
 
     /**
      * Constructor
@@ -46,7 +46,7 @@ class OptionData implements Serializable
      * @param bool $selected
      * @param bool $valid
      */
-    public function __construct(string $label = null, string $value = null, bool $selected, bool $valid = true)
+    public function __construct(?string $label, ?string $value, bool $selected, bool $valid = true)
     {
         $this->label = $label;
         $this->value = $value;
@@ -65,7 +65,7 @@ class OptionData implements Serializable
     /**
      * @inheritdoc
      */
-    public function serialize()
+    public function serialize(): mixed
     {
         return $this->value;
     }

@@ -20,18 +20,7 @@ class ColumnSchemaBuilder extends YiiColumnSchemaBuilder
     /**
      * @inheritdoc
      */
-    public function init()
-    {
-        static::$typeCategoryMap[Schema::TYPE_TINYTEXT] = self::CATEGORY_STRING;
-        static::$typeCategoryMap[Schema::TYPE_MEDIUMTEXT] = self::CATEGORY_STRING;
-        static::$typeCategoryMap[Schema::TYPE_LONGTEXT] = self::CATEGORY_STRING;
-        static::$typeCategoryMap[Schema::TYPE_ENUM] = self::CATEGORY_STRING;
-    }
-
-    /**
-     * @inheritdoc
-     */
-    protected function buildLengthString()
+    protected function buildLengthString(): string
     {
         if ($this->type == Schema::TYPE_ENUM) {
             $schema = Craft::$app->getDb()->getSchema();

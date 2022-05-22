@@ -12,7 +12,9 @@ use craft\console\Controller;
 use craft\helpers\Console;
 use craft\helpers\FileHelper;
 use craft\helpers\StringHelper;
+use Throwable;
 use yii\console\ExitCode;
+use ZipArchive;
 
 /**
  * Performs database operations.
@@ -25,17 +27,17 @@ class DbController extends Controller
     /**
      * @var bool Whether the backup should be saved as a zip file.
      */
-    public $zip = false;
+    public bool $zip = false;
 
     /**
      * @var bool Whether to overwrite an existing backup file, if a specific file path is given.
      */
-    public $overwrite = false;
+    public bool $overwrite = false;
 
     /**
      * @inheritdoc
      */
-    public function options($actionID)
+    public function options($actionID): array
     {
         $options = parent::options($actionID);
 
@@ -61,18 +63,18 @@ class DbController extends Controller
      * - A full file path
      * - A folder path (backup will be saved in there with a dynamically-generated name)
      * - A filename (backup will be saved in the working directory with the given name)
-     * - Blank (backup will be saved to the `config/backups/` folder with a dynamically-generated name)
+     * - Blank (backup will be saved to the `storage/backups/` folder with a dynamically-generated name)
      *
      * @return int
      */
-    public function actionBackup(string $path = null): int
+    public function actionBackup(?string $path = null): int
     {
         $this->stdout('Backing up the database ... ');
         $db = Craft::$app->getDb();
 
         if ($path !== null) {
             // Prefix with the working directory if a relative path or no path is given
-            if (strpos($path, '.') === 0 || strpos(FileHelper::normalizePath($path, '/'), '/') === false) {
+            if (str_starts_with($path, '.') || !str_contains(FileHelper::normalizePath($path, '/'), '/')) {
                 $path = getcwd() . DIRECTORY_SEPARATOR . $path;
             }
 
@@ -80,7 +82,7 @@ class DbController extends Controller
 
             if (is_dir($path)) {
                 $path .= DIRECTORY_SEPARATOR . basename($db->getBackupFilePath());
-            } else if ($this->zip) {
+            } elseif ($this->zip) {
                 $path = preg_replace('/\.zip$/', '', $path);
             }
         } else {
@@ -115,7 +117,7 @@ class DbController extends Controller
                 unlink($path);
                 $path = $zipPath;
             }
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             Craft::$app->getErrorHandler()->logException($e);
             $this->stderr('error: ' . $e->getMessage() . PHP_EOL, Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
@@ -123,17 +125,22 @@ class DbController extends Controller
 
         $this->stdout('done' . PHP_EOL, Console::FG_GREEN);
         $size = Craft::$app->getFormatter()->asShortSize(filesize($path));
-        $this->stdout("Backup file: {$path} ({$size})" . PHP_EOL);
+        $this->stdout("Backup file: $path ($size)" . PHP_EOL);
         return ExitCode::OK;
     }
 
     /**
      * Restores a database backup.
      *
+     * Example:
+     * ```
+     * php craft db/restore ./my-backup.sql
+     * ```
+     *
      * @param string|null $path The path to the database backup file.
      * @return int
      */
-    public function actionRestore(string $path = null): int
+    public function actionRestore(?string $path = null): int
     {
         if (!is_file($path)) {
             $this->stderr("Backup file doesn't exist: $path" . PHP_EOL);
@@ -141,7 +148,7 @@ class DbController extends Controller
         }
 
         if (strtolower(pathinfo($path, PATHINFO_EXTENSION)) === 'zip') {
-            $zip = new \ZipArchive();
+            $zip = new ZipArchive();
 
             if ($zip->open($path) !== true) {
                 $this->stderr("Unable to open the zip file at $path." . PHP_EOL, Console::FG_RED);
@@ -168,7 +175,7 @@ class DbController extends Controller
 
         try {
             Craft::$app->getDb()->restore($path);
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             Craft::$app->getErrorHandler()->logException($e);
             $this->stderr('error: ' . $e->getMessage() . PHP_EOL, Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
@@ -187,6 +194,11 @@ class DbController extends Controller
 
     /**
      * Converts tables’ character sets and collations. (MySQL only)
+     *
+     * Example:
+     * ```
+     * php craft db/convert-charset utf8 utf8_unicode_ci
+     * ```
      *
      * @param string|null $charset The target character set, which honors `DbConfig::$charset`
      *                               or defaults to `utf8`.

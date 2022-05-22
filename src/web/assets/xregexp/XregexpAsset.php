@@ -17,9 +17,9 @@ class XregexpAsset extends AssetBundle
     /**
      * @inheritdoc
      */
-    public function init()
+    public function init(): void
     {
-        $this->sourcePath = '@lib/xregexp';
+        $this->sourcePath = __dir__ . '/dist';
 
         $this->js = [
             'xregexp-all.js',

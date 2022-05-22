@@ -29,9 +29,9 @@ class Session extends \yii\web\Session
      * ```twig{1}
      * {% set message = craft.app.session.getFlash('notice', null, true) %}
      * {% if message %}
-     *     <p class="notice">
-     *         {{ message }}
-     *     </p>
+     *   <p class="notice">
+     *     {{ message }}
+     *   </p>
      * {% endif %}
      * ```
      */
@@ -49,15 +49,15 @@ class Session extends \yii\web\Session
      * $messages = Craft::$app->session->getAllFlashes(true);
      * ```
      * ```twig{1}
-     * {% set messages = craft.app.session.getAllFLashes(true) %}
+     * {% set messages = craft.app.session.getAllFlashes(true) %}
      * {% for key, message in messages %}
-     *     <p class="{{ key }}">
-     *         {{ message }}
-     *     </p>
+     *   <p class="{{ key }}">
+     *     {{ message }}
+     *   </p>
      * {% endfor %}
      * ```
      */
-    public function getAllFlashes($delete = false)
+    public function getAllFlashes($delete = false): array
     {
         return parent::getAllFlashes($delete);
     }
@@ -72,13 +72,13 @@ class Session extends \yii\web\Session
      * ```
      * ```twig{1}
      * {% if craft.app.session.hasFlash('notice') %}
-     *     <p class="notice">
-     *         {{ craft.app.session.getFlash('notice', null, true) }}
-     *     </p>
+     *   <p class="notice">
+     *     {{ craft.app.session.getFlash('notice', null, true) }}
+     *   </p>
      * {% endif %}
      * ```
      */
-    public function hasFlash($key)
+    public function hasFlash($key): bool
     {
         return parent::hasFlash($key);
     }

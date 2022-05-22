@@ -3,7 +3,6 @@
  * @link https://craftcms.com/
  * @copyright Copyright (c) Pixel & Tonic, Inc.
  * @license https://craftcms.github.io/license/
- * @since 3.4.0
  */
 
 namespace craft\events;
@@ -23,12 +22,12 @@ class AssetPreviewEvent extends Event
     /**
      * @var Asset The asset Element associated with the event.
      */
-    public $asset;
+    public Asset $asset;
 
     /**
      * An AssetPreview handler
      *
-     * @var AssetPreviewHandlerInterface $previewHandler
+     * @var AssetPreviewHandlerInterface|null $previewHandler
      */
-    public $previewHandler;
+    public ?AssetPreviewHandlerInterface $previewHandler = null;
 }

@@ -32,20 +32,20 @@ class DashboardAsset extends AssetBundle
      * @inheritdoc
      */
     public $css = [
-        'dashboard.css',
+        'css/Dashboard.css',
     ];
 
     /**
      * @inheritdoc
      */
     public $js = [
-        'Dashboard.min.js',
+        'Dashboard.js',
     ];
 
     /**
      * @inheritdoc
      */
-    public function registerAssetFiles($view)
+    public function registerAssetFiles($view): void
     {
         parent::registerAssetFiles($view);
 

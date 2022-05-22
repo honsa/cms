@@ -32,22 +32,22 @@ class EditUserAsset extends AssetBundle
      * @inheritdoc
      */
     public $css = [
-        'account.css',
-        'profile.css',
+        'css/AccountSettingsForm.css',
+        'css/profile.css',
     ];
 
     /**
      * @inheritdoc
      */
     public $js = [
-        'AccountSettingsForm.min.js',
-        'profile.min.js',
+        'AccountSettingsForm.js',
+        'profile.js',
     ];
 
     /**
      * @inheritdoc
      */
-    public function registerAssetFiles($view)
+    public function registerAssetFiles($view): void
     {
         parent::registerAssetFiles($view);
 

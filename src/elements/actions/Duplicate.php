@@ -11,6 +11,7 @@ use Craft;
 use craft\base\ElementAction;
 use craft\base\ElementInterface;
 use craft\elements\db\ElementQueryInterface;
+use Throwable;
 
 /**
  * Duplicate represents a Duplicate element action.
@@ -23,12 +24,12 @@ class Duplicate extends ElementAction
     /**
      * @var bool Whether to also duplicate the selected elements’ descendants
      */
-    public $deep = false;
+    public bool $deep = false;
 
     /**
      * @var string|null The message that should be shown after the elements get deleted
      */
-    public $successMessage;
+    public ?string $successMessage = null;
 
     /**
      * @inheritdoc
@@ -53,7 +54,7 @@ class Duplicate extends ElementAction
         $successCount = 0;
         $failCount = 0;
 
-        $this->_duplicateElements($elements, $successCount, $failCount);
+        $this->_duplicateElements($query, $elements, $successCount, $failCount);
 
         // Did all of them fail?
         if ($successCount === 0) {
@@ -71,13 +72,14 @@ class Duplicate extends ElementAction
     }
 
     /**
+     * @param ElementQueryInterface $query
      * @param ElementInterface[] $elements
      * @param int[] $duplicatedElementIds
      * @param int $successCount
      * @param int $failCount
      * @param ElementInterface|null $newParent
      */
-    private function _duplicateElements(array $elements, int &$successCount, int &$failCount, array &$duplicatedElementIds = [], ElementInterface $newParent = null)
+    private function _duplicateElements(ElementQueryInterface $query, array $elements, int &$successCount, int &$failCount, array &$duplicatedElementIds = [], ?ElementInterface $newParent = null): void
     {
         $elementsService = Craft::$app->getElements();
         $structuresService = Craft::$app->getStructures();
@@ -90,14 +92,9 @@ class Duplicate extends ElementAction
                 continue;
             }
 
-            $newAttributes = [];
-            if ($element::hasTitles() && (!$element->getIsDraft() || $element->getIsUnpublishedDraft())) {
-                $newAttributes['title'] = Craft::t('app', '{title} copy', ['title' => $element->title]);
-            }
-
             try {
-                $duplicate = $elementsService->duplicateElement($element, $newAttributes);
-            } catch (\Throwable $e) {
+                $duplicate = $elementsService->duplicateElement($element);
+            } catch (Throwable) {
                 // Validation error
                 $failCount++;
                 continue;
@@ -107,16 +104,23 @@ class Duplicate extends ElementAction
             $duplicatedElementIds[$element->id] = true;
 
             if ($newParent) {
-                // Append it to the duplicate of $element's parent
+                // Append it to the duplicate of $element’s parent
                 $structuresService->append($element->structureId, $duplicate, $newParent);
-            } else if ($element->structureId) {
+            } elseif ($element->structureId) {
                 // Place it right next to the original element
                 $structuresService->moveAfter($element->structureId, $duplicate, $element);
             }
 
             if ($this->deep) {
-                $children = $element->getChildren()->anyStatus()->all();
-                $this->_duplicateElements($children, $successCount, $failCount, $duplicatedElementIds, $duplicate);
+                // Don't use $element->children() here in case its lft/rgt values have changed
+                $children = $element::find()
+                    ->siteId($element->siteId)
+                    ->descendantOf($element->id)
+                    ->descendantDist(1)
+                    ->status(null)
+                    ->all();
+
+                $this->_duplicateElements($query, $children, $successCount, $failCount, $duplicatedElementIds, $duplicate);
             }
         }
     }

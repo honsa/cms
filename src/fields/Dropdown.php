@@ -11,7 +11,7 @@ use Craft;
 use craft\base\ElementInterface;
 use craft\base\SortableFieldInterface;
 use craft\fields\data\SingleOptionFieldData;
-use craft\helpers\Html;
+use craft\helpers\ArrayHelper;
 
 /**
  * Dropdown represents a Dropdown field.
@@ -40,25 +40,34 @@ class Dropdown extends BaseOptionsField implements SortableFieldInterface
     /**
      * @inheritdoc
      */
-    public $optgroups = true;
+    protected bool $optgroups = true;
 
     /**
      * @inheritdoc
      */
-    protected function inputHtml($value, ElementInterface $element = null): string
+    protected function inputHtml(mixed $value, ?ElementInterface $element = null): string
     {
         /** @var SingleOptionFieldData $value */
+        $options = $this->translatedOptions();
+
         if (!$value->valid) {
-            Craft::$app->getView()->setInitialDeltaValue($this->handle, null);
+            Craft::$app->getView()->setInitialDeltaValue($this->handle, $value->value);
+            $value = null;
+
+            // Add a blank option to the beginning if one doesn't already exist
+            if (!ArrayHelper::contains($options, function($option) {
+                return isset($option['value']) && $option['value'] === '';
+            })) {
+                array_unshift($options, ['label' => '', 'value' => '']);
+            }
         }
 
-        $id = Html::id($this->handle);
         return Craft::$app->getView()->renderTemplate('_includes/forms/select', [
-            'id' => $id,
-            'instructionsId' => "$id-instructions",
+            'id' => $this->getInputId(),
+            'describedBy' => $this->describedBy,
             'name' => $this->handle,
             'value' => $value,
-            'options' => $this->translatedOptions(),
+            'options' => $options,
         ]);
     }
 

@@ -25,47 +25,47 @@ class CsvResponseFormatter extends Component implements ResponseFormatterInterfa
     /**
      * @var string the Content-Type header for the response
      */
-    public $contentType = 'text/csv';
+    public string $contentType = 'text/csv';
 
     /**
      * @var bool whether the response data should include a header row
      */
-    public $includeHeaderRow = true;
+    public bool $includeHeaderRow = true;
 
     /**
      * @var string[] the header row values. The array keys of first result in
      * [[YiiResponse::$data]] will be used by default.
      */
-    public $headers;
+    public array $headers;
 
     /**
      * @var string the field delimiter (one character only)
      */
-    public $delimiter = ',';
+    public string $delimiter = ',';
 
     /**
      * @var string the field enclosure (one character only)
      */
-    public $enclosure = '"';
+    public string $enclosure = '"';
 
     /**
      * @var string the escape character (one character only)
      */
-    public $escapeChar = "\\";
+    public string $escapeChar = "\\";
 
     /**
      * Formats the specified response.
      *
      * @param YiiResponse $response the response to be formatted.
      */
-    public function format($response)
+    public function format($response): void
     {
         if (stripos($this->contentType, 'charset') === false) {
             $this->contentType .= '; charset=' . $response->charset;
         }
         $response->getHeaders()->set('Content-Type', $this->contentType);
 
-        $data = is_array($response->data) ? $response->data : [];
+        $data = is_iterable($response->data) ? $response->data : [];
         if (empty($data) && empty($this->headers)) {
             $response->content = '';
             return;
@@ -78,15 +78,26 @@ class CsvResponseFormatter extends Component implements ResponseFormatterInterfa
         // h/t https://www.php.net/manual/en/function.fputcsv.php#118252
         fputs($fp, chr(0xEF) . chr(0xBB) . chr(0xBF));
 
-        if ($this->includeHeaderRow) {
-            $headers = $this->headers ?? array_keys(reset($data));
-            fputcsv($fp, $headers, ',');
-        }
+        $suspectCharacters = ['=', '-', '+', '@'];
+
+        $headersIncluded = false;
 
         foreach ($data as $row) {
+            // Include the headers
+            if (!$headersIncluded && $this->includeHeaderRow) {
+                $headers = $this->headers ?? array_keys($row);
+                fputcsv($fp, $headers, ',');
+                $headersIncluded = true;
+            }
             foreach ($row as &$field) {
                 if (is_scalar($field)) {
                     $field = (string)$field;
+
+                    // Guard against CSV injection attacks
+                    // https://github.com/thephpleague/csv/issues/268
+                    if ($field && $field !== '' && in_array($field[0], $suspectCharacters)) {
+                        $field = "\t$field";
+                    }
                 } else {
                     $field = Json::encode($field);
                 }

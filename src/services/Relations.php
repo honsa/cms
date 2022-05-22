@@ -14,11 +14,13 @@ use craft\db\Query;
 use craft\db\Table;
 use craft\fields\BaseRelationField;
 use craft\helpers\Db;
+use Throwable;
 use yii\base\Component;
 
 /**
  * Relations service.
- * An instance of the Relations service is globally accessible in Craft via [[\craft\base\ApplicationTrait::getRelations()|`Craft::$app->relations`]].
+ *
+ * An instance of the service is available via [[\craft\base\ApplicationTrait::getRelations()|`Craft::$app->relations`]].
  *
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 3.0.0
@@ -31,9 +33,9 @@ class Relations extends Component
      * @param BaseRelationField $field
      * @param ElementInterface $source
      * @param array $targetIds
-     * @throws \Throwable
+     * @throws Throwable
      */
-    public function saveRelations(BaseRelationField $field, ElementInterface $source, array $targetIds)
+    public function saveRelations(BaseRelationField $field, ElementInterface $source, array $targetIds): void
     {
         if (!is_array($targetIds)) {
             $targetIds = [];
@@ -105,7 +107,7 @@ class Relations extends Component
                             $sortOrder + 1,
                         ];
                     }
-                    Db::batchInsert(Table::RELATIONS, ['fieldId', 'sourceId', 'sourceSiteId', 'targetId', 'sortOrder'], $values, true, $db);
+                    Db::batchInsert(Table::RELATIONS, ['fieldId', 'sourceId', 'sourceSiteId', 'targetId', 'sortOrder'], $values, $db);
                 }
 
                 if (!empty($deleteIds)) {
@@ -115,7 +117,7 @@ class Relations extends Component
                 }
 
                 $transaction->commit();
-            } catch (\Throwable $e) {
+            } catch (Throwable $e) {
                 $transaction->rollBack();
                 throw $e;
             }

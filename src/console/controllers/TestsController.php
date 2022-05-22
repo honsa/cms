@@ -16,8 +16,7 @@ use yii\base\InvalidArgumentException;
 use yii\console\ExitCode;
 
 /**
- * Provides support resources for testing both Craft's own services and your
- * implementation of Craft within your project.
+ * Provides support resources for testing both Craft’s services and your project’s Craft implementation.
  *
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @author Global Network Group | Giel Tettelaar <giel@yellowflash.net>
@@ -33,7 +32,7 @@ class TestsController extends Controller
      *
      * @return int
      */
-    public function actionSetup(string $dst = null): int
+    public function actionSetup(?string $dst = null): int
     {
         if ($dst === null) {
             $dst = getcwd();
@@ -47,7 +46,7 @@ class TestsController extends Controller
 
         $handle = opendir($src);
         if ($handle === false) {
-            throw new InvalidArgumentException("Unable to open directory: {$src}");
+            throw new InvalidArgumentException("Unable to open directory: $src");
         }
 
         while (($file = readdir($handle)) !== false) {
@@ -69,7 +68,7 @@ class TestsController extends Controller
             $this->stdout('The following files/folders will be overwritten:' . PHP_EOL . PHP_EOL, Console::FG_YELLOW);
 
             foreach ($conflicts as $file) {
-                $this->stdout("- {$file}" . PHP_EOL, Console::FG_YELLOW);
+                $this->stdout("- $file" . PHP_EOL, Console::FG_YELLOW);
             }
 
             $this->stdout(PHP_EOL);
@@ -83,7 +82,7 @@ class TestsController extends Controller
         // Confirm
         $this->stdout('The following files/folders will be created:' . PHP_EOL . PHP_EOL);
         foreach ($plan as $file) {
-            $this->stdout("- {$file}" . PHP_EOL);
+            $this->stdout("- $file" . PHP_EOL);
         }
         $this->stdout(PHP_EOL);
         if (!$this->confirm('Continue?', true)) {

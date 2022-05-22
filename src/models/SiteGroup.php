@@ -9,6 +9,7 @@ namespace craft\models;
 
 use Craft;
 use craft\base\Model;
+use craft\helpers\App;
 use craft\helpers\ArrayHelper;
 use craft\records\SiteGroup as SiteGroupRecord;
 use craft\validators\UniqueValidator;
@@ -25,17 +26,17 @@ class SiteGroup extends Model
     /**
      * @var int|null ID
      */
-    public $id;
+    public ?int $id = null;
 
     /**
      * @var string|null UID
      */
-    public $uid;
+    public ?string $uid = null;
 
     /**
      * @var string|null Name
      */
-    private $_name;
+    private ?string $_name = null;
 
     /**
      * Returns the site group’s name.
@@ -46,7 +47,7 @@ class SiteGroup extends Model
      */
     public function getName(bool $parse = true): string
     {
-        return ($parse ? Craft::parseEnv($this->_name) : $this->_name) ?? '';
+        return ($parse ? App::parseEnv($this->_name) : $this->_name) ?? '';
     }
 
     /**
@@ -63,7 +64,7 @@ class SiteGroup extends Model
     /**
      * @inheritdoc
      */
-    public function attributes()
+    public function attributes(): array
     {
         $attributes = parent::attributes();
         $attributes[] = 'name';
@@ -73,7 +74,7 @@ class SiteGroup extends Model
     /**
      * @inheritdoc
      */
-    public function attributeLabels()
+    public function attributeLabels(): array
     {
         return [
             'name' => Craft::t('app', 'Name'),
@@ -124,7 +125,7 @@ class SiteGroup extends Model
     }
 
     /**
-     * Returns the field layout config for this site group.
+     * Returns the site group’s config.
      *
      * @return array
      * @since 3.5.0

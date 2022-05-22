@@ -19,17 +19,17 @@ class AdminTableAsset extends AssetBundle
     /**
      * @var bool
      */
-    private $useDevServer = false;
+    private bool $useDevServer = false;
 
     /**
-     * @var bool
+     * @var string
      */
-    private $devServerBaseUrl = 'http://localhost:8082/';
+    private string $devServerBaseUrl = 'http://localhost:8082/';
 
     /**
      * @inheritdoc
      */
-    public function init()
+    public function init(): void
     {
         $this->sourcePath = __DIR__ . '/dist/';
 
@@ -44,12 +44,10 @@ class AdminTableAsset extends AssetBundle
             ];
         } else {
             $this->css = [
-                'css/chunk-vendors.css',
                 'css/app.css',
             ];
 
             $this->js = [
-                'js/chunk-vendors.js',
                 'js/app.js',
             ];
         }

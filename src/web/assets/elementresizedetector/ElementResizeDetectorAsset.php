@@ -17,9 +17,9 @@ class ElementResizeDetectorAsset extends AssetBundle
     /**
      * @inheritdoc
      */
-    public function init()
+    public function init(): void
     {
-        $this->sourcePath = '@lib/element-resize-detector';
+        $this->sourcePath = __DIR__ . '/dist';
 
         $this->js = [
             'element-resize-detector.js',

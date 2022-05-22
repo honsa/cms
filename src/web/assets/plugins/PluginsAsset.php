@@ -32,20 +32,20 @@ class PluginsAsset extends AssetBundle
      * @inheritdoc
      */
     public $css = [
-        'plugins.css',
+        'css/PluginManager.css',
     ];
 
     /**
      * @inheritdoc
      */
     public $js = [
-        'PluginManager.min.js',
+        'PluginManager.js',
     ];
 
     /**
      * @inheritdoc
      */
-    public function registerAssetFiles($view)
+    public function registerAssetFiles($view): void
     {
         parent::registerAssetFiles($view);
 

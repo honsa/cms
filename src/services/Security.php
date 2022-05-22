@@ -14,8 +14,9 @@ use yii\base\InvalidConfigException;
 use yii\helpers\Inflector;
 
 /**
- * Security component.
- * An instance of the Security component is globally accessible in Craft via [[\yii\base\Application::getSecurity()|`Craft::$app->security`]].
+ * Security service.
+ *
+ * An instance of the service is available via [[\yii\base\Application::getSecurity()|`Craft::$app->security`]].
  *
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 3.0.0
@@ -26,19 +27,19 @@ class Security extends \yii\base\Security
      * @var string[] Keywords used to reference sensitive data
      * @see redactIfSensitive()
      */
-    public $sensitiveKeywords = [];
+    public array $sensitiveKeywords = [];
 
     /**
      * @var mixed
      */
-    private $_blowFishHashCost;
+    private mixed $_blowFishHashCost = null;
 
     /**
+     * @inheritdoc
      */
-    public function init()
+    public function init(): void
     {
         parent::init();
-
         $this->_blowFishHashCost = Craft::$app->getConfig()->getGeneral()->blowfishHashCost;
     }
 
@@ -67,17 +68,6 @@ class Security extends \yii\base\Security
         }
 
         return $hash;
-    }
-
-    /**
-     * Deprecated wrapper for [[\craft\config\GeneralConfig::securityKey|Craft::$app->config->general->securityKey]].
-     *
-     * @return string
-     * @deprecated in 3.0.0-beta.27. Use [[\craft\config\GeneralConfig::securityKey|Craft::$app->config->general->securityKey]] instead.
-     */
-    public function getValidationKey(): string
-    {
-        return Craft::$app->getConfig()->getGeneral()->securityKey;
     }
 
     /**
@@ -115,12 +105,12 @@ class Security extends \yii\base\Security
      * It indicates whether the hash value in the data is in binary format. If false, it means the hash value consists
      * of lowercase hex digits only.
      * hex digits will be generated.
-     * @return string the real data with the hash stripped off. False if the data is tampered.
+     * @return string|false the real data with the hash stripped off. False if the data is tampered.
      * @throws Exception if the validation key could not be written
      * @throws InvalidConfigException when HMAC generation fails.
      * @see hashData()
      */
-    public function validateData($data, $key = null, $rawHash = false)
+    public function validateData($data, $key = null, $rawHash = false): string|false
     {
         if ($key === null) {
             $key = Craft::$app->getConfig()->getGeneral()->securityKey;
@@ -140,7 +130,7 @@ class Security extends \yii\base\Security
      * @see decryptByKey()
      * @see encryptByPassword()
      */
-    public function encryptByKey($data, $inputKey = null, $info = null)
+    public function encryptByKey($data, $inputKey = null, $info = null): string
     {
         if ($inputKey === null) {
             $inputKey = Craft::$app->getConfig()->getGeneral()->securityKey;
@@ -154,12 +144,12 @@ class Security extends \yii\base\Security
      * @param string $data the encrypted data to decrypt
      * @param string|null $inputKey the input to use for encryption and authentication
      * @param string $info optional context and application specific information, see [[hkdf()]]
-     * @return bool|string the decrypted data or false on authentication failure
+     * @return string|false the decrypted data or false on authentication failure
      * @throws InvalidConfigException on OpenSSL not loaded
      * @throws Exception on OpenSSL error
      * @see encryptByKey()
      */
-    public function decryptByKey($data, $inputKey = null, $info = null)
+    public function decryptByKey($data, $inputKey = null, $info = null): string|false
     {
         if ($inputKey === null) {
             $inputKey = Craft::$app->getConfig()->getGeneral()->securityKey;
@@ -169,22 +159,31 @@ class Security extends \yii\base\Security
     }
 
     /**
+     * Returns whether the given key appears to be sensitive.
+     *
+     * @param string $key
+     * @return bool
+     * @since 3.7.24
+     */
+    public function isSensitive(string $key): bool
+    {
+        return preg_match('/\b(' . implode('|', $this->sensitiveKeywords) . ')\b/', Inflector::camel2words($key, false));
+    }
+
+    /**
      * Checks the given key to see if it looks like it contains sensitive info, and if so, redacts the given value.
      *
-     * @param string $name
-     * @param string|array $value
-     * @return string|array The possibly-redacted value
+     * @param string $key
+     * @param mixed $value
+     * @return mixed The possibly-redacted value
      */
-    public function redactIfSensitive(string $name, $value)
+    public function redactIfSensitive(string $key, mixed $value): mixed
     {
         if (is_array($value)) {
             foreach ($value as $n => &$v) {
                 $v = $this->redactIfSensitive($n, $v);
             }
-        } else if (
-            is_string($value) &&
-            preg_match('/\b(' . implode('|', $this->sensitiveKeywords) . ')\b/', Inflector::camel2words($name, false))
-        ) {
+        } elseif (is_string($value) && $this->isSensitive($key)) {
             $value = str_repeat('•', strlen($value));
         }
 

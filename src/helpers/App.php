@@ -19,15 +19,10 @@ use craft\elements\User;
 use craft\errors\MissingComponentException;
 use craft\helpers\Session as SessionHelper;
 use craft\i18n\Locale;
-use craft\log\Dispatcher;
-use craft\log\FileTarget;
-use craft\log\StreamLogTarget;
 use craft\mail\Mailer;
 use craft\mail\Message;
 use craft\mail\transportadapters\Sendmail;
 use craft\models\MailSettings;
-use craft\mutex\MysqlMutex;
-use craft\mutex\PgsqlMutex;
 use craft\services\ProjectConfig as ProjectConfigService;
 use craft\web\AssetManager;
 use craft\web\Request;
@@ -36,11 +31,13 @@ use craft\web\Response as WebResponse;
 use craft\web\Session;
 use craft\web\User as WebUser;
 use craft\web\View;
+use HTMLPurifier_Encoder;
+use ReflectionClass;
+use ReflectionProperty;
+use yii\base\Event;
 use yii\base\InvalidArgumentException;
+use yii\base\InvalidValueException;
 use yii\helpers\Inflector;
-use yii\i18n\PhpMessageSource;
-use yii\log\Dispatcher as YiiDispatcher;
-use yii\log\Logger;
 use yii\mutex\FileMutex;
 use yii\web\JsonParser;
 
@@ -55,18 +52,230 @@ class App
     /**
      * @var bool
      */
-    private static $_iconv;
+    private static bool $_iconv;
 
     /**
-     * Returns an environment variable, checking for it in `$_SERVER` and calling `getenv()` as a fallback.
+     * @var string[]
+     * @see isPathAllowed()
+     */
+    private static array $_basePaths;
+
+    /**
+     * Returns whether Dev Mode is enabled.
+     *
+     * @return bool
+     * @since 4.0.0
+     */
+    public static function devMode(): bool
+    {
+        return YII_DEBUG;
+    }
+
+    /**
+     * Returns an environment variable, falling back to a PHP constant of the same name.
      *
      * @param string $name The environment variable name
-     * @return string|array|false The environment variable value
+     * @return mixed The environment variable, PHP constant, or `null` if neither are found
      * @since 3.4.18
      */
-    public static function env(string $name)
+    public static function env(string $name): mixed
     {
-        return $_SERVER[$name] ?? getenv($name);
+        if (isset($_SERVER[$name])) {
+            return static::normalizeValue($_SERVER[$name]);
+        }
+
+        if (($env = getenv($name)) !== false) {
+            return static::normalizeValue($env);
+        }
+
+        if (defined($name)) {
+            return static::normalizeValue(constant($name));
+        }
+
+        return null;
+    }
+
+    /**
+     * Returns a config array for a given class, based on any environment variables or PHP constants named based on its
+     * public properties.
+     *
+     * Environment variable/PHP constant names must be capitalized, SNAKE_CASED versions of the object’s property names,
+     * possibly with a given prefix.
+     *
+     * For example, if an object has a `fooBar` property, and `X`/`X_` is passed as the prefix, the resulting array
+     * may contain a `fooBar` key set to an `X_FOO_BAR` environment variable value, if it exists.
+     *
+     * @param string $class The class name
+     * @phpstan-param class-string $class
+     * @param string|null $envPrefix The environment variable name prefix
+     * @return array
+     * @phpstan-return array<string, mixed>
+     * @since 4.0.0
+     */
+    public static function envConfig(string $class, ?string $envPrefix = null): array
+    {
+        $envPrefix = $envPrefix !== null ? StringHelper::ensureRight($envPrefix, '_') : '';
+        $properties = (new ReflectionClass($class))->getProperties(ReflectionProperty::IS_PUBLIC);
+        $envConfig = [];
+
+        foreach ($properties as $prop) {
+            if ($prop->isStatic()) {
+                continue;
+            }
+
+            $propName = $prop->getName();
+            $envName = $envPrefix . strtoupper(StringHelper::toSnakeCase($propName));
+            $envValue = static::env($envName);
+
+            if ($envValue !== null) {
+                $envConfig[$propName] = $envValue;
+            }
+        }
+
+        return $envConfig;
+    }
+
+    /**
+     * Checks if a string references an environment variable (`$VARIABLE_NAME`)
+     * and/or an alias (`@aliasName`), and returns the referenced value.
+     *
+     * If the string references an environment variable with a value of `true`
+     * or `false`, a boolean value will be returned.
+     *
+     * ---
+     *
+     * ```php
+     * $value1 = App::parseEnv('$SMTP_PASSWORD');
+     * $value2 = App::parseEnv('@webroot');
+     * ```
+     *
+     * @param string|null $value
+     * @return string|bool|null The parsed value, or the original value if it didn’t
+     * reference an environment variable and/or alias.
+     * @since 3.7.29
+     */
+    public static function parseEnv(?string $value): bool|string|null
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if (preg_match('/^\$(\w+)$/', $value, $matches)) {
+            $env = static::env($matches[1]);
+
+            if ($env === null) {
+                // starts with $ but not an environment variable/constant, so just give up, it's hopeless!
+                return $value;
+            }
+
+            $value = $env;
+        }
+
+        if (is_string($value) && str_starts_with($value, '@')) {
+            $value = Craft::getAlias($value, false) ?: $value;
+        }
+
+        return $value;
+    }
+
+    /**
+     * Checks if a string references an environment variable (`$VARIABLE_NAME`) and returns the referenced
+     * boolean value, or `null` if a boolean value can’t be determined.
+     *
+     * ---
+     *
+     * ```php
+     * $status = App::parseBooleanEnv('$SYSTEM_STATUS') ?? false;
+     * ```
+     *
+     * @param mixed $value
+     * @return bool|null
+     * @since 3.7.29
+     */
+    public static function parseBooleanEnv(mixed $value): ?bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        if ($value === 0 || $value === 1) {
+            return (bool)$value;
+        }
+
+        if (!is_string($value)) {
+            return null;
+        }
+
+        return filter_var(static::parseEnv($value), FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE);
+    }
+
+    /**
+     * Returns a CLI command option from `argv`, or `null` if it wasn’t passed.
+     *
+     * Supported option syntaxes are:
+     *
+     * - `name=value`
+     * - `name value`
+     * - `name` (implies `true`)
+     *
+     * `name` must begin with `--` or `-`. Other values will be rejected.
+     *
+     * If the value is numeric, a float or int will be returned.
+     *
+     * If the value is `true` or `false`, a boolean will be returned.
+     *
+     * If the option has no value (either because the following item begins with `-` or it’s the last item),
+     * `true` will be returned.
+     *
+     * @param string $name The option name, beginning with `--` or `-`
+     * @param bool $unset Whether the option should be removed from `argv` if found
+     * @return string|float|int|true|null
+     * @since 4.0.0
+     */
+    public static function cliOption(string $name, bool $unset = false): string|float|int|bool|null
+    {
+        if (!preg_match('/^--?[\w-]+$/', $name)) {
+            throw new InvalidArgumentException("Invalid CLI option name: $name");
+        }
+
+        if (empty($_SERVER['argv'])) {
+            return null;
+        }
+
+        // We shouldn’t count on array being perfectly indexed
+        $keys = array_keys($_SERVER['argv']);
+        $nameLen = strlen($name);
+
+        foreach ($keys as $i => $key) {
+            $item = $_SERVER['argv'][$key];
+            $nextKey = $keys[$i + 1] ?? null;
+
+            if ($item === $name) {
+                $nextItem = $nextKey !== null ? ($_SERVER['argv'][$nextKey] ?? null) : null;
+                if ($nextItem !== null && $nextItem[0] !== '-') {
+                    $value = $nextItem;
+                    $unsetNext = true;
+                } else {
+                    $value = true;
+                }
+            } elseif (str_starts_with($item, "$name=")) {
+                $value = substr($item, $nameLen + 1);
+            } else {
+                continue;
+            }
+
+            if ($unset) {
+                unset($_SERVER['argv'][$key]);
+                if (isset($unsetNext)) {
+                    unset($_SERVER['argv'][$nextKey]);
+                }
+                $_SERVER['argv'] = array_values($_SERVER['argv']);
+            }
+
+            return static::normalizeValue($value);
+        }
+
+        return null;
     }
 
     /**
@@ -80,6 +289,7 @@ class App
     {
         return static::env('CRAFT_NITRO') === '1';
     }
+
 
     /**
      * Returns an array of all known Craft editions’ IDs.
@@ -100,14 +310,11 @@ class App
      */
     public static function editionHandle(int $edition): string
     {
-        switch ($edition) {
-            case Craft::Solo:
-                return 'solo';
-            case Craft::Pro:
-                return 'pro';
-            default:
-                throw new InvalidArgumentException('Invalid Craft edition ID: ' . $edition);
-        }
+        return match ($edition) {
+            Craft::Solo => 'solo',
+            Craft::Pro => 'pro',
+            default => throw new InvalidArgumentException('Invalid Craft edition ID: ' . $edition),
+        };
     }
 
     /**
@@ -118,14 +325,11 @@ class App
      */
     public static function editionName(int $edition): string
     {
-        switch ($edition) {
-            case Craft::Solo:
-                return 'Solo';
-            case Craft::Pro:
-                return 'Pro';
-            default:
-                throw new InvalidArgumentException('Invalid Craft edition ID: ' . $edition);
-        }
+        return match ($edition) {
+            Craft::Solo => 'Solo',
+            Craft::Pro => 'Pro',
+            default => throw new InvalidArgumentException('Invalid Craft edition ID: ' . $edition),
+        };
     }
 
     /**
@@ -138,14 +342,11 @@ class App
      */
     public static function editionIdByHandle(string $handle): int
     {
-        switch ($handle) {
-            case 'solo':
-                return Craft::Solo;
-            case 'pro':
-                return Craft::Pro;
-            default:
-                throw new InvalidArgumentException('Invalid Craft edition handle: ' . $handle);
-        }
+        return match ($handle) {
+            'solo' => Craft::Solo,
+            'pro' => Craft::Pro,
+            default => throw new InvalidArgumentException('Invalid Craft edition handle: ' . $handle),
+        };
     }
 
     /**
@@ -154,7 +355,7 @@ class App
      * @param mixed $edition An edition’s ID (or is it?)
      * @return bool Whether $edition is a valid edition ID.
      */
-    public static function isValidEdition($edition): bool
+    public static function isValidEdition(mixed $edition): bool
     {
         if ($edition === false || $edition === null) {
             return false;
@@ -183,6 +384,28 @@ class App
     {
         $version = phpversion($name);
         return static::normalizeVersion($version);
+    }
+
+    /**
+     * Normalizes an environment variable/constant name/CLI command option.
+     *
+     * It converts the following:
+     *
+     * - `'true'` → `true`
+     * - `'false'` → `false`
+     * - Numeric string → integer or float
+     *
+     * @param mixed $value
+     * @return mixed
+     * @since 4.0.0
+     */
+    public static function normalizeValue(mixed $value): mixed
+    {
+        return match (is_string($value) ? strtolower($value) : $value) {
+            'true' => true,
+            'false' => false,
+            default => is_numeric($value) ? Number::toIntOrFloat($value) : $value,
+        };
     }
 
     /**
@@ -217,7 +440,7 @@ class App
      * @return int|float The value normalized into bytes.
      * @since 3.0.38
      */
-    public static function phpConfigValueInBytes(string $var)
+    public static function phpConfigValueInBytes(string $var): float|int
     {
         $value = trim(ini_get($var));
         return static::phpSizeToBytes($value);
@@ -230,7 +453,7 @@ class App
      * @return int|float The value normalized into bytes.
      * @since 3.6.0
      */
-    public static function phpSizeToBytes(string $value)
+    public static function phpSizeToBytes(string $value): float|int
     {
         $unit = strtolower(substr($value, -1, 1));
         $value = (int)$value;
@@ -238,15 +461,102 @@ class App
         switch ($unit) {
             case 'g':
                 $value *= 1024;
-            // no break (cumulative multiplier)
+            // no break
             case 'm':
                 $value *= 1024;
-            // no break (cumulative multiplier)
+            // no break
             case 'k':
                 $value *= 1024;
         }
 
         return $value;
+    }
+
+    /**
+     * Retrieves a file path PHP config setting and normalizes it to an array of paths.
+     *
+     * @param string $var The PHP config setting to retrieve
+     * @return string[] The normalized paths
+     * @since 3.7.34
+     */
+    public static function phpConfigValueAsPaths(string $var): array
+    {
+        return static::normalizePhpPaths(ini_get($var));
+    }
+
+    /**
+     * Normalizes a PHP path setting to an array of paths
+     *
+     * @param string $value The PHP path setting value
+     * @return string[] The normalized paths
+     * @since 3.7.34
+     */
+    public static function normalizePhpPaths(string $value): array
+    {
+        // semicolons are used to separate paths on Windows; everything else uses colons
+        $value = str_replace(';', ':', trim($value));
+
+        if ($value === '') {
+            return [];
+        }
+
+        $paths = [];
+
+        foreach (explode(':', $value) as $path) {
+            $path = trim($path);
+
+            // Parse ${ENV_VAR}s
+            try {
+                $path = preg_replace_callback('/\$\{(.*?)\}/', function($match) {
+                    $env = App::env($match[1]);
+                    if ($env === false) {
+                        throw new InvalidValueException();
+                    }
+                    return $env;
+                }, $path);
+            } catch (InvalidValueException) {
+                // References an env var that doesn’t exist
+                continue;
+            }
+
+            // '.' => working dir
+            if ($path === '.' || str_starts_with($path, './') || str_starts_with($path, '.\\')) {
+                $path = getcwd() . substr($path, 1);
+            }
+
+            // Normalize
+            $paths[] = FileHelper::normalizePath($path);
+        }
+
+        return $paths;
+    }
+
+    /**
+     * Returns whether the given path is within PHP’s `open_basedir` setting.
+     *
+     * @param string $path
+     * @return bool
+     * @since 3.7.34
+     */
+    public static function isPathAllowed(string $path): bool
+    {
+        if (!isset(self::$_basePaths)) {
+            self::$_basePaths = static::phpConfigValueAsPaths('open_basedir');
+        }
+
+        if (!self::$_basePaths) {
+            return true;
+        }
+
+        $path = FileHelper::normalizePath($path);
+
+        foreach (self::$_basePaths as $basePath) {
+            if (str_starts_with($path, $basePath)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -268,6 +578,7 @@ class App
         }
 
         $testValue = sprintf('%sM', ceil($testBytes / (1024 * 1024)));
+        /** @phpstan-ignore-next-line */
         set_error_handler(function() {
         });
         $result = ini_set('memory_limit', $testValue);
@@ -292,13 +603,13 @@ class App
      */
     public static function checkForValidIconv(): bool
     {
-        if (self::$_iconv !== null) {
+        if (isset(self::$_iconv)) {
             return self::$_iconv;
         }
 
         // Check if iconv is installed. Note we can't just use HTMLPurifier_Encoder::iconvAvailable() because they
         // don't consider iconv "installed" if it's there but "unusable".
-        return self::$_iconv = (function_exists('iconv') && \HTMLPurifier_Encoder::testIconvTruncateBug() === \HTMLPurifier_Encoder::ICONV_OK);
+        return self::$_iconv = (function_exists('iconv') && HTMLPurifier_Encoder::testIconvTruncateBug() === HTMLPurifier_Encoder::ICONV_OK);
     }
 
     /**
@@ -309,13 +620,14 @@ class App
      */
     public static function supportsIdn(): bool
     {
-        return function_exists('idn_to_ascii') && defined('INTL_IDNA_VARIANT_UTS46');
+        return defined('INTL_IDNA_VARIANT_UTS46');
     }
 
     /**
      * Returns a humanized class name.
      *
      * @param string $class
+     * @phpstan-param class-string $class
      * @return string
      */
     public static function humanizeClass(string $class): string
@@ -327,10 +639,11 @@ class App
 
     /**
      * Sets PHP’s memory limit to the maximum specified by the
-     * <config3:phpMaxMemoryLimit> config setting, and gives the script an
+     * <config4:phpMaxMemoryLimit> config setting, and gives the script an
      * unlimited amount of time to execute.
+     *
      */
-    public static function maxPowerCaptain()
+    public static function maxPowerCaptain(): void
     {
         // Don't mess with the memory_limit, even at the config's request, if it's already set to -1 or >= 1.5GB
         $memoryLimit = static::phpConfigValueInBytes('memory_limit');
@@ -339,14 +652,16 @@ class App
             @ini_set('memory_limit', $maxMemoryLimit ?: '1536M');
         }
 
-        // Try to disable the max execution time
-        @set_time_limit(0);
+        // Try to reset time limit
+        if (!function_exists('set_time_limit') || !@set_time_limit(0)) {
+            Craft::warning('set_time_limit() is not available', __METHOD__);
+        }
     }
 
     /**
      * @return string|null
      */
-    public static function licenseKey()
+    public static function licenseKey(): ?string
     {
         if (defined('CRAFT_LICENSE_KEY')) {
             $licenseKey = CRAFT_LICENSE_KEY;
@@ -388,7 +703,9 @@ class App
                 '#' . $i . ' ' .
                 ($frame['class'] ?? '') .
                 ($frame['type'] ?? '') .
+                /** @phpstan-ignore-next-line */
                 ($frame['function'] ?? '') . '()' .
+                /** @phpstan-ignore-next-line */
                 (isset($frame['file']) ? ' called at [' . ($frame['file'] ?? '') . ':' . ($frame['line'] ?? '') . ']' : '');
         }
 
@@ -403,7 +720,18 @@ class App
      */
     public static function isEphemeral(): bool
     {
-        return defined('CRAFT_EPHEMERAL') && CRAFT_EPHEMERAL === true;
+        return self::parseBooleanEnv('$CRAFT_EPHEMERAL') === true;
+    }
+
+    /**
+     * Returns whether Craft is logging to stdout/stderr.
+     *
+     * @return bool
+     * @since 4.0.0
+     */
+    public static function isStreamLog(): bool
+    {
+        return self::parseBooleanEnv('$CRAFT_STREAM_LOG') === true;
     }
 
     // App component configs
@@ -475,14 +803,16 @@ class App
             ];
         }
 
-        return [
+        $config = [
             'class' => Connection::class,
             'driverName' => $driver,
             'dsn' => $dbConfig->dsn,
             'username' => $dbConfig->user,
             'password' => $dbConfig->password,
             'charset' => $dbConfig->charset,
-            'tablePrefix' => $dbConfig->tablePrefix,
+            'tablePrefix' => $dbConfig->tablePrefix ?? '',
+            'enableLogging' => static::devMode(),
+            'enableProfiling' => static::devMode(),
             'schemaMap' => [
                 $driver => $schemaConfig,
             ],
@@ -490,8 +820,18 @@ class App
                 $driver => Command::class,
             ],
             'attributes' => $dbConfig->attributes,
-            'enableSchemaCache' => !YII_DEBUG,
+            'enableSchemaCache' => !static::devMode(),
         ];
+
+        if ($driver === Connection::DRIVER_PGSQL && $dbConfig->setSchemaOnConnect && $dbConfig->schema) {
+            $config['on afterOpen'] = function(Event $event) use ($dbConfig) {
+                /** @var Connection $db */
+                $db = $event->sender;
+                $db->createCommand("SET search_path TO $dbConfig->schema;")->execute();
+            };
+        }
+
+        return $config;
     }
 
     /**
@@ -511,6 +851,7 @@ class App
      *
      * @param MailSettings|null $settings The system mail settings
      * @return array
+     * @phpstan-return array{class:class-string<Mailer>}
      * @since 3.0.18
      */
     public static function mailerConfig(?MailSettings $settings = null): array
@@ -521,7 +862,7 @@ class App
 
         try {
             $adapter = MailerHelper::createTransportAdapter($settings->transportType, $settings->transportSettings);
-        } catch (MissingComponentException $e) {
+        } catch (MissingComponentException) {
             // Fallback to the PHP mailer
             $adapter = new Sendmail();
         }
@@ -530,28 +871,25 @@ class App
             'class' => Mailer::class,
             'messageClass' => Message::class,
             'from' => [
-                Craft::parseEnv($settings->fromEmail) => Craft::parseEnv($settings->fromName),
+                App::parseEnv($settings->fromEmail) => App::parseEnv($settings->fromName),
             ],
-            'replyTo' => Craft::parseEnv($settings->replyToEmail),
-            'template' => Craft::parseEnv($settings->template),
+            'replyTo' => App::parseEnv($settings->replyToEmail),
+            'template' => App::parseEnv($settings->template),
             'transport' => $adapter->defineTransport(),
         ];
     }
 
     /**
-     * Returns a file-based `mutex` component config.
+     * Returns a file-based mutex driver config.
      *
      * ::: tip
-     * If you were calling this to override the [[\yii\mutex\FileMutex::$isWindows]] property, note that you
-     * can safely remove your custom `mutex` component config for Craft 3.5.0 and later. Craft now uses a
-     * database-based mutex component by default (see [[dbMutexConfig()]]), which doesn’t care which type of
-     * file system is used.
+     * If you were calling this to override the [[\yii\mutex\FileMutex::$isWindows]] property, note that
+     * overriding the `mutex` component may no longer be necessary, as Craft no longer uses a mutex
+     * when Dev Mode is enabled.
      * :::
      *
      * @return array
      * @since 3.0.18
-     * @deprecated in 3.5.0.
-     *
      */
     public static function mutexConfig(): array
     {
@@ -565,114 +903,6 @@ class App
     }
 
     /**
-     * Returns the `mutex` component config.
-     *
-     * @return array
-     * @since 3.5.18
-     */
-    public static function dbMutexConfig(): array
-    {
-        if (!Craft::$app->getIsInstalled()) {
-            return App::mutexConfig();
-        }
-
-        $db = Craft::$app->getDb();
-
-        return [
-            'class' => $db->getIsMysql() ? MysqlMutex::class : PgsqlMutex::class,
-            'db' => $db,
-            'namePrefix' => Craft::$app->id,
-        ];
-    }
-
-    /**
-     * Returns the `log` component config.
-     *
-     * @return array|null
-     * @since 3.0.18
-     * @deprecated in 3.6.0. Override `components.log.targets` instead
-     */
-    public static function logConfig()
-    {
-        // Using Yii's Dispatcher class here is intentional
-        return [
-            'class' => YiiDispatcher::class,
-            'targets' => array_values(static::defaultLogTargets()),
-        ];
-    }
-
-    /**
-     * Returns the default log targets.
-     *
-     * @return array
-     * @since 3.6.14
-     */
-    public static function defaultLogTargets(): array
-    {
-        $targets = [];
-
-        $isConsoleRequest = Craft::$app->getRequest()->getIsConsoleRequest();
-
-        if ($isConsoleRequest || Craft::$app->getUser()->enableSession) {
-            $generalConfig = Craft::$app->getConfig()->getGeneral();
-
-            $fileTargetConfig = [
-                'class' => FileTarget::class,
-                'fileMode' => $generalConfig->defaultFileMode,
-                'dirMode' => $generalConfig->defaultDirMode,
-                'includeUserIp' => $generalConfig->storeUserIps,
-                'except' => [
-                    PhpMessageSource::class . ':*',
-                ],
-            ];
-
-            if ($isConsoleRequest) {
-                $fileTargetConfig['logFile'] = '@storage/logs/console.log';
-            } else {
-                $fileTargetConfig['logFile'] = '@storage/logs/web.log';
-            }
-
-            // Only log errors and warnings, unless Craft is running in Dev Mode or it's being installed/updated
-            // (Explicitly check GeneralConfig::$devMode here, because YII_DEBUG is always `1` for console requests.)
-            $onlyLogErrors = (
-                !Craft::$app->getConfig()->getGeneral()->devMode &&
-                Craft::$app->getIsInstalled() &&
-                !Craft::$app->getUpdates()->getIsCraftDbMigrationNeeded()
-            );
-
-            if ($onlyLogErrors) {
-                $fileTargetConfig['levels'] = Logger::LEVEL_ERROR | Logger::LEVEL_WARNING;
-            }
-
-            $targets[Dispatcher::TARGET_FILE] = $fileTargetConfig;
-
-            if (!Craft::$app->getRequest()->isConsoleRequest && defined('CRAFT_STREAM_LOG') && CRAFT_STREAM_LOG === true) {
-                $streamErrLogTarget = [
-                    'class' => StreamLogTarget::class,
-                    'url' => 'php://stderr',
-                    'levels' => Logger::LEVEL_ERROR | Logger::LEVEL_WARNING,
-                    'includeUserIp' => $generalConfig->storeUserIps,
-                ];
-
-                $targets[Dispatcher::TARGET_STDERR] = $streamErrLogTarget;
-
-                if (!$onlyLogErrors) {
-                    $streamOutLogTarget = [
-                        'class' => StreamLogTarget::class,
-                        'url' => 'php://stdout',
-                        'levels' => ~Logger::LEVEL_ERROR & ~Logger::LEVEL_WARNING,
-                        'includeUserIp' => $generalConfig->storeUserIps,
-                    ];
-
-                    $targets[Dispatcher::TARGET_STDOUT] = $streamOutLogTarget;
-                }
-            }
-        }
-
-        return $targets;
-    }
-
-    /**
      * Returns the `projectConfig` component config.
      */
     public static function projectConfigConfig(): array
@@ -680,6 +910,7 @@ class App
         return [
             'class' => ProjectConfigService::class,
             'readOnly' => Craft::$app->getIsInstalled() && !Craft::$app->getConfig()->getGeneral()->allowAdminChanges,
+            'writeYamlAutomatically' => !self::isEphemeral(),
         ];
     }
 
@@ -783,7 +1014,7 @@ class App
             'parsers' => [
                 'application/json' => JsonParser::class,
             ],
-            'isCpRequest' => defined('CRAFT_CP') ? (bool)CRAFT_CP : null,
+            'isCpRequest' => static::parseBooleanEnv('$CRAFT_CP'),
         ];
 
         if ($generalConfig->trustedHosts !== null) {

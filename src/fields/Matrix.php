@@ -21,7 +21,6 @@ use craft\elements\db\ElementQuery;
 use craft\elements\db\ElementQueryInterface;
 use craft\elements\db\MatrixBlockQuery;
 use craft\elements\MatrixBlock;
-use craft\elements\MatrixBlock as MatrixBlockElement;
 use craft\events\BlockTypesEvent;
 use craft\fieldlayoutelements\CustomField;
 use craft\gql\arguments\elements\MatrixBlock as MatrixBlockArguments;
@@ -32,12 +31,11 @@ use craft\helpers\ArrayHelper;
 use craft\helpers\Db;
 use craft\helpers\ElementHelper;
 use craft\helpers\Gql;
-use craft\helpers\Gql as GqlHelper;
-use craft\helpers\Html;
 use craft\helpers\Json;
 use craft\helpers\Queue;
 use craft\helpers\StringHelper;
 use craft\i18n\Locale;
+use craft\i18n\Translation;
 use craft\models\FieldLayoutTab;
 use craft\models\MatrixBlockType;
 use craft\queue\jobs\ApplyNewPropagationMethod;
@@ -61,16 +59,16 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
      * @event SectionEvent The event that is triggered before a section is saved.
      * @since 3.1.27
      */
-    const EVENT_SET_FIELD_BLOCK_TYPES = 'setFieldBlockTypes';
+    public const EVENT_SET_FIELD_BLOCK_TYPES = 'setFieldBlockTypes';
 
-    const PROPAGATION_METHOD_NONE = 'none';
-    const PROPAGATION_METHOD_SITE_GROUP = 'siteGroup';
-    const PROPAGATION_METHOD_LANGUAGE = 'language';
+    public const PROPAGATION_METHOD_NONE = 'none';
+    public const PROPAGATION_METHOD_SITE_GROUP = 'siteGroup';
+    public const PROPAGATION_METHOD_LANGUAGE = 'language';
     /**
      * @since 3.7.0
      */
-    const PROPAGATION_METHOD_CUSTOM = 'custom';
-    const PROPAGATION_METHOD_ALL = 'all';
+    public const PROPAGATION_METHOD_CUSTOM = 'custom';
+    public const PROPAGATION_METHOD_ALL = 'all';
 
     /**
      * @inheritdoc
@@ -102,21 +100,22 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
     /**
      * @var int|null Min blocks
      */
-    public $minBlocks;
+    public ?int $minBlocks = null;
 
     /**
      * @var int|null Max blocks
      */
-    public $maxBlocks;
+    public ?int $maxBlocks = null;
 
     /**
      * @var string Content table name
      * @since 3.0.23
      */
-    public $contentTable;
+    public string $contentTable;
 
     /**
      * @var string Propagation method
+     * @phpstan-var self::PROPAGATION_METHOD_NONE|self::PROPAGATION_METHOD_SITE_GROUP|self::PROPAGATION_METHOD_LANGUAGE|self::PROPAGATION_METHOD_ALL
      *
      * This will be set to one of the following:
      *
@@ -127,57 +126,43 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
      *
      * @since 3.2.0
      */
-    public $propagationMethod = self::PROPAGATION_METHOD_ALL;
+    public string $propagationMethod = self::PROPAGATION_METHOD_ALL;
 
     /**
      * @var string|null The field’s propagation key format, if [[propagationMethod]] is `custom`
      * @since 3.7.0
      */
-    public $propagationKeyFormat;
-
-    /**
-     * @var int Whether each site should get its own unique set of blocks
-     * @deprecated in 3.2.0. Use [[$propagationMethod]] instead
-     */
-    public $localizeBlocks = false;
+    public ?string $propagationKeyFormat = null;
 
     /**
      * @var MatrixBlockType[]|null The field’s block types
      */
-    private $_blockTypes;
+    private ?array $_blockTypes = null;
 
     /**
      * @var MatrixBlockType[]|null The block types' fields
      */
-    private $_blockTypeFields;
+    private ?array $_blockTypeFields = null;
 
     /**
      * @inheritdoc
      */
     public function __construct($config = [])
     {
+        // Config normalization
+        if (($config['contentTable'] ?? null) === '') {
+            unset($config['contentTable']);
+        }
         if (array_key_exists('localizeBlocks', $config)) {
             $config['propagationMethod'] = $config['localizeBlocks'] ? 'none' : 'all';
             unset($config['localizeBlocks']);
         }
 
-        parent::__construct($config);
-    }
-
-    /**
-     * @inheritdoc
-     */
-    public function init()
-    {
-        if ($this->propagationKeyFormat === '') {
-            $this->propagationKeyFormat = null;
+        if (isset($config['blockTypes']) && $config['blockTypes'] === '') {
+            $config['blockTypes'] = [];
         }
 
-        // todo: remove this in 4.0
-        // Set localizeBlocks in case anything is still checking it
-        $this->localizeBlocks = $this->propagationMethod === self::PROPAGATION_METHOD_NONE;
-
-        parent::init();
+        parent::__construct($config);
     }
 
     /**
@@ -215,7 +200,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
      */
     public function getBlockTypes(): array
     {
-        if ($this->_blockTypes !== null) {
+        if (isset($this->_blockTypes)) {
             return $this->_blockTypes;
         }
 
@@ -229,57 +214,63 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
     /**
      * Returns all of the block types' fields.
      *
+     * @param int[]|null $typeIds The Matrix block type IDs to return fields for.
+     * If null, all block type fields will be returned.
      * @return FieldInterface[]
      */
-    public function getBlockTypeFields(): array
+    public function getBlockTypeFields(?array $typeIds = null): array
     {
-        if ($this->_blockTypeFields !== null) {
-            return $this->_blockTypeFields;
-        }
+        if (!isset($this->_blockTypeFields)) {
+            $this->_blockTypeFields = [];
 
-        if (empty($blockTypes = $this->getBlockTypes())) {
-            return $this->_blockTypeFields = [];
-        }
+            if (!empty($blockTypes = $this->getBlockTypes())) {
+                // Get the fields & layout IDs
+                $contexts = [];
+                $layoutIds = [];
+                foreach ($blockTypes as $blockType) {
+                    $contexts[] = 'matrixBlockType:' . $blockType->uid;
+                    $layoutIds[] = $blockType->fieldLayoutId;
+                }
 
-        // Get the fields & layout IDs
-        $contexts = [];
-        $layoutIds = [];
-        foreach ($blockTypes as $blockType) {
-            $contexts[] = 'matrixBlockType:' . $blockType->uid;
-            $layoutIds[] = $blockType->fieldLayoutId;
-        }
+                /** @var FieldInterface[] $fieldsById */
+                $fieldsById = ArrayHelper::index(Craft::$app->getFields()->getAllFields($contexts), 'id');
 
-        /** @var FieldInterface[] $fieldsById */
-        $fieldsById = ArrayHelper::index(Craft::$app->getFields()->getAllFields($contexts), 'id');
+                // Get all the field IDs grouped by layout ID
+                $fieldIdsByLayoutId = Craft::$app->getFields()->getFieldIdsByLayoutIds($layoutIds);
 
-        // Get all the field IDs grouped by layout ID
-        $fieldIdsByLayoutId = Craft::$app->getFields()->getFieldIdsByLayoutIds($layoutIds);
+                // Assemble the fields
+                foreach ($blockTypes as $blockType) {
+                    if (isset($fieldIdsByLayoutId[$blockType->fieldLayoutId])) {
+                        $fieldColumnPrefix = 'field_' . $blockType->handle . '_';
 
-        // Assemble the fields
-        $this->_blockTypeFields = [];
-
-        foreach ($blockTypes as $blockType) {
-            if (isset($fieldIdsByLayoutId[$blockType->fieldLayoutId])) {
-                $fieldColumnPrefix = 'field_' . $blockType->handle . '_';
-
-                foreach ($fieldIdsByLayoutId[$blockType->fieldLayoutId] as $fieldId) {
-                    if (isset($fieldsById[$fieldId])) {
-                        $fieldsById[$fieldId]->columnPrefix = $fieldColumnPrefix;
-                        $this->_blockTypeFields[] = $fieldsById[$fieldId];
+                        foreach ($fieldIdsByLayoutId[$blockType->fieldLayoutId] as $fieldId) {
+                            if (isset($fieldsById[$fieldId])) {
+                                $fieldsById[$fieldId]->columnPrefix = $fieldColumnPrefix;
+                                $this->_blockTypeFields[$blockType->id][] = $fieldsById[$fieldId];
+                            }
+                        }
                     }
                 }
             }
         }
 
-        return $this->_blockTypeFields;
+        $fields = [];
+
+        foreach ($this->_blockTypeFields as $blockTypeId => $blockTypeFields) {
+            if ($typeIds === null || in_array($blockTypeId, $typeIds)) {
+                array_push($fields, ...$blockTypeFields);
+            }
+        }
+
+        return $fields;
     }
 
     /**
      * Sets the block types.
      *
-     * @param MatrixBlockType|array $blockTypes The block type settings or actual MatrixBlockType model instances
+     * @param array|MatrixBlockType $blockTypes The block type settings or actual MatrixBlockType model instances
      */
-    public function setBlockTypes($blockTypes)
+    public function setBlockTypes(array|MatrixBlockType $blockTypes): void
     {
         $this->_blockTypes = [];
         $defaultFieldConfig = [
@@ -325,8 +316,9 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
                     $fieldLayoutTab->sortOrder = 1;
                     $fieldLayout->setTabs([$fieldLayoutTab]);
                 }
-                $fieldLayoutTab->elements = [];
+
                 $fields = [];
+                $layoutElements = [];
 
                 if (!empty($config['fields'])) {
                     foreach ($config['fields'] as $fieldId => $fieldConfig) {
@@ -350,17 +342,16 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
                             'settings' => $fieldConfig['typesettings'],
                         ]);
 
-                        $fieldLayoutTab->elements[] = Craft::createObject([
+                        $layoutElements[] = Craft::createObject([
                             'class' => CustomField::class,
+                            'uid' => $fieldConfig['uid'] ?? null,
                             'required' => (bool)$fieldConfig['required'],
                             'width' => (int)($fieldConfig['width'] ?? 0) ?: 100,
-                        ], [
-                            $field,
-                        ]);
+                        ], [$field]);
                     }
                 }
 
-                $blockType->setFields($fields);
+                $fieldLayoutTab->setElements($layoutElements);
                 $this->_blockTypes[] = $blockType;
             }
         }
@@ -393,7 +384,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
     /**
      * @inheritdoc
      */
-    public function getSettingsHtml()
+    public function getSettingsHtml(): ?string
     {
         // Get the available field types data
         $fieldTypeInfo = $this->_getFieldOptionsForConfigurator();
@@ -440,18 +431,15 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
             $blockTypeFields[$blockTypeId] = [];
             $totalNewFields = 0;
             $fieldLayout = $blockType->getFieldLayout();
-            if (!$fieldLayout) {
-                continue;
-            }
             $tabs = $fieldLayout->getTabs();
             if (empty($tabs)) {
                 continue;
             }
             $tab = $fieldLayout->getTabs()[0];
 
-            foreach ($tab->elements as $element) {
-                if ($element instanceof CustomField) {
-                    $field = $element->getField();
+            foreach ($tab->getElements() as $layoutElement) {
+                if ($layoutElement instanceof CustomField) {
+                    $field = $layoutElement->getField();
 
                     // If it's a missing field, swap it with a Text field
                     if ($field instanceof MissingField) {
@@ -461,12 +449,12 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
                             'type' => $field->expectedType,
                         ]));
                         $field = $fallback;
-                        $element->setField($field);
+                        $layoutElement->setField($field);
                         $blockType->hasFieldErrors = true;
                     }
 
                     $fieldId = (string)($field->id ?? 'new' . ++$totalNewFields);
-                    $blockTypeFields[$blockTypeId][$fieldId] = $element;
+                    $blockTypeFields[$blockTypeId][$fieldId] = $layoutElement;
 
                     if (!$field->getIsNew()) {
                         $fieldTypeOptions[$field->id] = [];
@@ -501,7 +489,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
     /**
      * @inheritdoc
      */
-    public function normalizeValue($value, ElementInterface $element = null)
+    public function normalizeValue(mixed $value, ?ElementInterface $element = null): mixed
     {
         if ($value instanceof ElementQueryInterface) {
             return $value;
@@ -514,7 +502,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
         // error or we're loading an entry revision.
         if ($value === '') {
             $query->setCachedResult([]);
-        } else if ($element && is_array($value)) {
+        } elseif ($element && is_array($value)) {
             $query->setCachedResult($this->_createBlocksFromSerializedData($value, $element));
         }
 
@@ -528,7 +516,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
      * @param ElementInterface|null $element
      * @since 3.4.0
      */
-    private function _populateQuery(MatrixBlockQuery $query, ElementInterface $element = null)
+    private function _populateQuery(MatrixBlockQuery $query, ?ElementInterface $element = null): void
     {
         // Existing element?
         if ($element && $element->id) {
@@ -537,6 +525,13 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
             // Clear out id=false if this query was populated previously
             if ($query->id === false) {
                 $query->id = null;
+            }
+
+            // If the owner is a revision, allow revision blocks to be returned as well
+            if ($element->getIsRevision()) {
+                $query
+                    ->revisions(null)
+                    ->trashed(null);
             }
         } else {
             $query->id = false;
@@ -550,7 +545,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
     /**
      * @inheritdoc
      */
-    public function serializeValue($value, ElementInterface $element = null)
+    public function serializeValue(mixed $value, ?ElementInterface $element = null): mixed
     {
         /** @var MatrixBlockQuery $value */
         $serialized = [];
@@ -580,43 +575,56 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
     /**
      * @inheritdoc
      */
-    public function modifyElementsQuery(ElementQueryInterface $query, $value)
+    public function modifyElementsQuery(ElementQueryInterface $query, mixed $value): void
     {
         /** @var ElementQuery $query */
+        if ($value === null) {
+            return;
+        }
+
+        $ns = $this->handle . '_' . StringHelper::randomString(5);
+        $existsQuery = (new Query())
+            ->from(["matrixblocks_$ns" => DbTable::MATRIXBLOCKS])
+            ->innerJoin(["elements_$ns" => DbTable::ELEMENTS], "[[elements_$ns.id]] = [[matrixblocks_$ns.id]]")
+            ->innerJoin(["matrixblocks_owners_$ns" => DbTable::MATRIXBLOCKS_OWNERS], [
+                'and',
+                "[[matrixblocks_owners_$ns.blockId]] = [[elements_$ns.id]]",
+                "[[matrixblocks_owners_$ns.ownerId]] = [[elements.id]]",
+            ])
+            ->andWhere([
+                "matrixblocks_$ns.fieldId" => $this->id,
+                "elements_$ns.enabled" => true,
+                "elements_$ns.dateDeleted" => null,
+            ]);
+
         if ($value === 'not :empty:') {
             $value = ':notempty:';
         }
 
-        if ($value === ':notempty:' || $value === ':empty:') {
-            $ns = $this->handle . '_' . StringHelper::randomString(5);
-            $condition = [
-                'exists', (new Query())
-                    ->from(["matrixblocks_$ns" => DbTable::MATRIXBLOCKS])
-                    ->innerJoin(["elements_$ns" => DbTable::ELEMENTS], "[[elements_$ns.id]] = [[matrixblocks_$ns.id]]")
-                    ->where("[[matrixblocks_$ns.ownerId]] = [[elements.id]]")
-                    ->andWhere([
-                        "matrixblocks_$ns.fieldId" => $this->id,
-                        "elements_$ns.enabled" => true,
-                        "elements_$ns.dateDeleted" => null,
-                    ]),
-            ];
+        if ($value === ':empty:') {
+            $query->subQuery->andWhere(['not exists', $existsQuery]);
+        } else {
+            if ($value !== ':notempty:') {
+                $ids = $value;
+                if (!is_array($ids)) {
+                    $ids = is_string($ids) ? StringHelper::split($ids) : [$ids];
+                }
 
-            if ($value === ':notempty:') {
-                $query->subQuery->andWhere($condition);
-            } else {
-                $query->subQuery->andWhere(['not', $condition]);
+                $ids = array_map(function($id) {
+                    return $id instanceof MatrixBlock ? $id->id : (int)$id;
+                }, $ids);
+
+                $existsQuery->andWhere(["matrixblocks_$ns.id" => $ids]);
             }
-        } else if ($value !== null) {
-            return false;
-        }
 
-        return null;
+            $query->subQuery->andWhere(['exists', $existsQuery]);
+        }
     }
 
     /**
      * @inheritdoc
      */
-    public function getIsTranslatable(ElementInterface $element = null): bool
+    public function getIsTranslatable(?ElementInterface $element = null): bool
     {
         return $this->propagationMethod !== self::PROPAGATION_METHOD_ALL;
     }
@@ -624,7 +632,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
     /**
      * @inheritdoc
      */
-    public function getTranslationDescription(ElementInterface $element = null)
+    public function getTranslationDescription(?ElementInterface $element = null): ?string
     {
         if (!$element) {
             return null;
@@ -652,37 +660,20 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
 
     /**
      * @inheritdoc
-     */
-    public function getStatus(ElementInterface $element): ?array
-    {
-        // The only thing we need to actually present to the UI is whether it is outdated.
-        // Individual blocks will show their own field statuses.
-        if ($element->isFieldOutdated($this->handle)) {
-            return [
-                Element::ATTR_STATUS_OUTDATED,
-                Craft::t('app', 'This field was updated in the Current revision.'),
-            ];
-        }
-
-        return null;
-    }
-
-    /**
-     * @inheritdoc
      * @throws InvalidConfigException
      */
-    protected function inputHtml($value, ElementInterface $element = null): string
+    protected function inputHtml(mixed $value, ?ElementInterface $element = null): string
     {
         if ($element !== null && $element->hasEagerLoadedElements($this->handle)) {
-            $value = $element->getEagerLoadedElements($this->handle);
+            $value = $element->getEagerLoadedElements($this->handle)->all();
         }
 
         if ($value instanceof MatrixBlockQuery) {
-            $value = $value->getCachedResult() ?? $value->limit(null)->anyStatus()->all();
+            $value = $value->getCachedResult() ?? $value->limit(null)->status(null)->all();
         }
 
         $view = Craft::$app->getView();
-        $id = Html::id($this->handle);
+        $id = $this->getInputId();
 
         // Let plugins/modules override which block types should be available for this field
         $event = new BlockTypesEvent([
@@ -756,15 +747,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
             [
                 'validateBlocks',
                 'on' => [Element::SCENARIO_ESSENTIALS, Element::SCENARIO_DEFAULT, Element::SCENARIO_LIVE],
-            ],
-            [
-                ArrayValidator::class,
-                'min' => $this->minBlocks ?: null,
-                'max' => $this->maxBlocks ?: null,
-                'tooFew' => Craft::t('app', '{attribute} should contain at least {min, number} {min, plural, one{block} other{blocks}}.'),
-                'tooMany' => Craft::t('app', '{attribute} should contain at most {max, number} {max, plural, one{block} other{blocks}}.'),
                 'skipOnEmpty' => false,
-                'on' => Element::SCENARIO_LIVE,
             ],
         ];
     }
@@ -772,7 +755,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
     /**
      * @inheritdoc
      */
-    public function isValueEmpty($value, ElementInterface $element): bool
+    public function isValueEmpty(mixed $value, ElementInterface $element): bool
     {
         /** @var MatrixBlockQuery $value */
         return $value->count() === 0;
@@ -783,7 +766,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
      *
      * @param ElementInterface $element
      */
-    public function validateBlocks(ElementInterface $element)
+    public function validateBlocks(ElementInterface $element): void
     {
         /** @var MatrixBlockQuery $value */
         $value = $element->getFieldValue($this->handle);
@@ -801,7 +784,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
             }
 
             if (!$block->validate()) {
-                $element->addModelErrors($block, "{$this->handle}[{$i}]");
+                $element->addModelErrors($block, "$this->handle[$i]");
                 $allBlocksValidate = false;
             }
         }
@@ -810,15 +793,37 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
             // Just in case the blocks weren't already cached
             $value->setCachedResult($blocks);
         }
+
+        if (
+            $element->getScenario() === Element::SCENARIO_LIVE &&
+            ($this->minBlocks || $this->maxBlocks)
+        ) {
+            $arrayValidator = new ArrayValidator([
+                'min' => $this->minBlocks ?: null,
+                'max' => $this->maxBlocks ?: null,
+                'tooFew' => $this->minBlocks ? Craft::t('app', '{attribute} should contain at least {min, number} {min, plural, one{block} other{blocks}}.', [
+                    'attribute' => Craft::t('site', $this->name),
+                    'min' => $this->minBlocks, // Need to pass this in now
+                ]) : null,
+                'tooMany' => $this->maxBlocks ? Craft::t('app', '{attribute} should contain at most {max, number} {max, plural, one{block} other{blocks}}.', [
+                    'attribute' => Craft::t('site', $this->name),
+                    'max' => $this->maxBlocks, // Need to pass this in now
+                ]) : null,
+                'skipOnEmpty' => false,
+            ]);
+
+            if (!$arrayValidator->validate($blocks, $error)) {
+                $element->addError($this->handle, $error);
+            }
+        }
     }
 
     /**
      * @inheritdoc
      */
-    protected function searchKeywords($value, ElementInterface $element): string
+    protected function searchKeywords(mixed $value, ElementInterface $element): string
     {
         /** @var MatrixBlockQuery $value */
-        /** @var MatrixBlock $block */
         $keywords = [];
 
         foreach ($value->all() as $block) {
@@ -837,7 +842,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
     /**
      * @inheritdoc
      */
-    public function getStaticHtml($value, ElementInterface $element): string
+    public function getStaticHtml(mixed $value, ElementInterface $element): string
     {
         /** @var MatrixBlockQuery $value */
         $value = $value->all();
@@ -862,7 +867,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
     /**
      * @inheritdoc
      */
-    public function getEagerLoadingMap(array $sourceElements)
+    public function getEagerLoadingMap(array $sourceElements): array|null|false
     {
         // Get the source element IDs
         $sourceElementIds = [];
@@ -873,13 +878,18 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
 
         // Return any relation data on these elements, defined with this field
         $map = (new Query())
-            ->select(['ownerId as source', 'id as target'])
-            ->from([DbTable::MATRIXBLOCKS])
-            ->where([
-                'fieldId' => $this->id,
-                'ownerId' => $sourceElementIds,
+            ->select([
+                'source' => 'matrixblocks_owners.ownerId',
+                'target' => 'matrixblocks.id',
             ])
-            ->orderBy(['sortOrder' => SORT_ASC])
+            ->from(['matrixblocks' => DbTable::MATRIXBLOCKS])
+            ->innerJoin(['matrixblocks_owners' => DbTable::MATRIXBLOCKS_OWNERS], [
+                'and',
+                '[[matrixblocks_owners.blockId]] = [[matrixblocks.id]]',
+                ['matrixblocks_owners.ownerId' => $sourceElementIds],
+            ])
+            ->where(['matrixblocks.fieldId' => $this->id])
+            ->orderBy(['matrixblocks_owners.sortOrder' => SORT_ASC])
             ->all();
 
         return [
@@ -897,17 +907,14 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
      * @inheritdoc
      * @since 3.3.0
      */
-    public function getContentGqlType()
+    public function getContentGqlType(): Type|array
     {
         $typeArray = MatrixBlockTypeGenerator::generateTypes($this);
         $typeName = $this->handle . '_MatrixField';
-        $resolver = function(MatrixBlockElement $value) {
-            return $value->getGqlTypeName();
-        };
 
         return [
             'name' => $this->handle,
-            'type' => Type::listOf(GqlHelper::getUnionType($typeName, $typeArray, $resolver)),
+            'type' => Type::nonNull(Type::listOf(Gql::getUnionType($typeName, $typeArray))),
             'args' => MatrixBlockArguments::getArguments(),
             'resolve' => MatrixBlockResolver::class . '::resolve',
             'complexity' => Gql::eagerLoadComplexity(),
@@ -918,7 +925,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
      * @inheritdoc
      * @since 3.5.0
      */
-    public function getContentGqlMutationArgumentType()
+    public function getContentGqlMutationArgumentType(): Type|array
     {
         return MatrixInputType::getType($this);
     }
@@ -960,11 +967,11 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
             // Ensure the block type has a UID
             if ($blockType->getIsNew()) {
                 $blockType->uid = StringHelper::UUID();
-            } else if (!$blockType->uid) {
+            } elseif (!$blockType->uid) {
                 $blockType->uid = Db::uidById(DbTable::MATRIXBLOCKTYPES, $blockType->id);
             }
 
-            foreach ($blockType->getFields() as $field) {
+            foreach ($blockType->getCustomFields() as $field) {
                 // Hack to allow blank field names
                 if (!$field->name) {
                     $field->name = '__blank__';
@@ -995,17 +1002,17 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
     /**
      * @inheritdoc
      */
-    public function afterSave(bool $isNew)
+    public function afterSave(bool $isNew): void
     {
         Craft::$app->getMatrix()->saveSettings($this, false);
 
         // If the propagation method just changed, resave all the Matrix blocks
-        if ($this->oldSettings !== null) {
+        if (isset($this->oldSettings)) {
             $oldPropagationMethod = $this->oldSettings['propagationMethod'] ?? self::PROPAGATION_METHOD_ALL;
             $oldPropagationKeyFormat = $this->oldSettings['propagationKeyFormat'] ?? null;
             if ($this->propagationMethod !== $oldPropagationMethod || $this->propagationKeyFormat !== $oldPropagationKeyFormat) {
                 Queue::push(new ApplyNewPropagationMethod([
-                    'description' => Craft::t('app', 'Applying new propagation method to Matrix blocks'),
+                    'description' => Translation::prep('app', 'Applying new propagation method to Matrix blocks'),
                     'elementType' => MatrixBlock::class,
                     'criteria' => [
                         'fieldId' => $this->id,
@@ -1020,7 +1027,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
     /**
      * @inheritdoc
      */
-    public function beforeApplyDelete()
+    public function beforeApplyDelete(): void
     {
         Craft::$app->getMatrix()->deleteMatrixField($this);
         parent::beforeApplyDelete();
@@ -1029,17 +1036,24 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
     /**
      * @inheritdoc
      */
-    public function afterElementPropagate(ElementInterface $element, bool $isNew)
+    public function afterElementPropagate(ElementInterface $element, bool $isNew): void
     {
         $matrixService = Craft::$app->getMatrix();
         $resetValue = false;
 
         if ($element->duplicateOf !== null) {
-            $matrixService->duplicateBlocks($this, $element->duplicateOf, $element, true);
+            // If this is a draft, just duplicate the relations
+            if ($element->getIsDraft()) {
+                $matrixService->duplicateOwnership($this, $element->duplicateOf, $element);
+            } elseif ($element->getIsRevision()) {
+                $matrixService->createRevisionBlocks($this, $element->duplicateOf, $element);
+            } else {
+                $matrixService->duplicateBlocks($this, $element->duplicateOf, $element, true, !$isNew);
+            }
             $resetValue = true;
-        } else if ($element->isFieldDirty($this->handle) || !empty($element->newSiteIds)) {
+        } elseif ($element->isFieldDirty($this->handle) || !empty($element->newSiteIds)) {
             $matrixService->saveField($this, $element);
-        } else if ($element->mergingCanonicalChanges) {
+        } elseif ($element->mergingCanonicalChanges) {
             $matrixService->mergeCanonicalChanges($this, $element);
             $resetValue = true;
         }
@@ -1064,16 +1078,15 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
             return false;
         }
 
-        // Delete any Matrix blocks that belong to this element(s)
+        // Delete any Matrix blocks that primarily belong to this element
         foreach (Craft::$app->getSites()->getAllSiteIds() as $siteId) {
-            $matrixBlocksQuery = MatrixBlock::find();
-            $matrixBlocksQuery->anyStatus();
-            $matrixBlocksQuery->siteId($siteId);
-            $matrixBlocksQuery->ownerId($element->id);
-
-            /** @var MatrixBlock[] $matrixBlocks */
-            $matrixBlocks = $matrixBlocksQuery->all();
             $elementsService = Craft::$app->getElements();
+            /** @var MatrixBlock[] $matrixBlocks */
+            $matrixBlocks = MatrixBlock::find()
+                ->primaryOwnerId($element->id)
+                ->status(null)
+                ->siteId($siteId)
+                ->all();
 
             foreach ($matrixBlocks as $matrixBlock) {
                 $matrixBlock->deletedWithOwner = true;
@@ -1087,15 +1100,16 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
     /**
      * @inheritdoc
      */
-    public function afterElementRestore(ElementInterface $element)
+    public function afterElementRestore(ElementInterface $element): void
     {
         // Also restore any Matrix blocks for this element
         $elementsService = Craft::$app->getElements();
         foreach (ElementHelper::supportedSitesForElement($element) as $siteInfo) {
+            /** @var MatrixBlock[] $blocks */
             $blocks = MatrixBlock::find()
-                ->anyStatus()
+                ->primaryOwnerId($element->id)
+                ->status(null)
                 ->siteId($siteInfo['siteId'])
-                ->ownerId($element->id)
                 ->trashed()
                 ->andWhere(['matrixblocks.deletedWithOwner' => true])
                 ->all();
@@ -1144,7 +1158,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
      * @param string $placeholderKey
      * @return array
      */
-    private function _getBlockTypeInfoForInput(ElementInterface $element = null, array $blockTypes, string $placeholderKey): array
+    private function _getBlockTypeInfoForInput(?ElementInterface $element, array $blockTypes, string $placeholderKey): array
     {
         $blockTypeInfo = [];
 
@@ -1169,7 +1183,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
             $fieldLayout = $blockType->getFieldLayout();
             $fieldLayoutTab = $fieldLayout->getTabs()[0] ?? new FieldLayoutTab();
 
-            foreach ($fieldLayoutTab->elements as $layoutElement) {
+            foreach ($fieldLayoutTab->getElements() as $layoutElement) {
                 if ($layoutElement instanceof CustomField) {
                     $layoutElement->getField()->setIsFresh(true);
                 }
@@ -1177,10 +1191,10 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
 
             $view->startJsBuffer();
             $bodyHtml = $view->namespaceInputs($fieldLayout->createForm($block)->render());
-            $footHtml = $view->clearJsBuffer();
+            $js = $view->clearJsBuffer();
 
             // Reset $_isFresh's
-            foreach ($fieldLayoutTab->elements as $layoutElement) {
+            foreach ($fieldLayoutTab->getElements() as $layoutElement) {
                 if ($layoutElement instanceof CustomField) {
                     $layoutElement->getField()->setIsFresh(null);
                 }
@@ -1190,7 +1204,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
                 'handle' => $blockType->handle,
                 'name' => Craft::t('site', $blockType->name),
                 'bodyHtml' => $bodyHtml,
-                'footHtml' => $footHtml,
+                'js' => $js,
             ];
         }
 
@@ -1213,11 +1227,12 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
 
         // Get the old blocks
         if ($element->id) {
+            /** @var MatrixBlock[] $oldBlocksById */
             $oldBlocksById = MatrixBlock::find()
                 ->fieldId($this->id)
                 ->ownerId($element->id)
                 ->siteId($element->siteId)
-                ->anyStatus()
+                ->status(null)
                 ->indexBy('id')
                 ->all();
         } else {
@@ -1235,7 +1250,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
         $prevBlock = null;
 
         $fieldNamespace = $element->getFieldParamNamespace();
-        $baseBlockFieldNamespace = $fieldNamespace ? "{$fieldNamespace}.{$this->handle}" : null;
+        $baseBlockFieldNamespace = $fieldNamespace ? "$fieldNamespace.$this->handle" : null;
 
         // Was the value posted in the new (delta) format?
         if (isset($value['blocks']) || isset($value['sortOrder'])) {
@@ -1252,7 +1267,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
         foreach ($newSortOrder as $blockId) {
             if (isset($newBlockData[$blockId])) {
                 $blockData = $newBlockData[$blockId];
-            } else if (
+            } elseif (
                 isset(Elements::$duplicatedElementSourceIds[$blockId]) &&
                 isset($newBlockData[Elements::$duplicatedElementSourceIds[$blockId]])
             ) {
@@ -1265,7 +1280,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
             // If this is a preexisting block but we don't have a record of it,
             // check to see if it was recently duplicated.
             if (
-                strpos($blockId, 'new') !== 0 &&
+                !str_starts_with($blockId, 'new') &&
                 !isset($oldBlocksById[$blockId]) &&
                 isset(Elements::$duplicatedElementIds[$blockId]) &&
                 isset($oldBlocksById[Elements::$duplicatedElementIds[$blockId]])
@@ -1275,8 +1290,24 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
 
             // Existing block?
             if (isset($oldBlocksById[$blockId])) {
+                /** @var MatrixBlock $block */
                 $block = $oldBlocksById[$blockId];
-                $block->dirty = !empty($blockData);
+                $dirty = !empty($blockData);
+
+                // Is this a derivative element, and does the block primarily belong to the canonical?
+                if ($dirty && $element->getIsDerivative() && $block->primaryOwnerId === $element->getCanonicalId()) {
+                    // Duplicate it as a draft. (We'll drop its draft status from `Matrix::saveField()`.)
+                    $block = Craft::$app->getDrafts()->createDraft($block, Craft::$app->getUser()->getId(), null, null, [
+                        'canonicalId' => $block->id,
+                        'primaryOwnerId' => $element->id,
+                        'owner' => $element,
+                        'siteId' => $element->siteId,
+                        'propagating' => false,
+                        'markAsSaved' => false,
+                    ]);
+                }
+
+                $block->dirty = $dirty;
             } else {
                 // Make sure it's a valid block type
                 if (!isset($blockData['type']) || !isset($blockTypes[$blockData['type']])) {
@@ -1285,7 +1316,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
                 $block = new MatrixBlock();
                 $block->fieldId = $this->id;
                 $block->typeId = $blockTypes[$blockData['type']]->id;
-                $block->ownerId = $element->id;
+                $block->primaryOwnerId = $block->ownerId = $element->id;
                 $block->siteId = $element->siteId;
 
                 // Preserve the collapsed state, which the browser can't remember on its own for new blocks
@@ -1305,7 +1336,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
 
             // Set the content post location on the block if we can
             if ($baseBlockFieldNamespace) {
-                $block->setFieldParamNamespace("{$baseBlockFieldNamespace}.{$blockId}.fields");
+                $block->setFieldParamNamespace("$baseBlockFieldNamespace.$blockId.fields");
             }
 
             if (isset($blockData['fields'])) {
@@ -1324,6 +1355,7 @@ class Matrix extends Field implements EagerLoadingFieldInterface, GqlInlineFragm
             $blocks[] = $block;
         }
 
+        /** @var MatrixBlock[] $blocks */
         return $blocks;
     }
 }

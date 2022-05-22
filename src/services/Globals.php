@@ -23,11 +23,13 @@ use craft\helpers\ProjectConfig as ProjectConfigHelper;
 use craft\helpers\StringHelper;
 use craft\models\FieldLayout;
 use craft\records\GlobalSet as GlobalSetRecord;
+use Throwable;
 use yii\base\Component;
 
 /**
  * Globals service.
- * An instance of the Globals service is globally accessible in Craft via [[\craft\base\ApplicationTrait::getGlobals()|`Craft::$app->globals`]].
+ *
+ * An instance of the service is available via [[\craft\base\ApplicationTrait::getGlobals()|`Craft::$app->globals`]].
  *
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 3.0.0
@@ -37,26 +39,24 @@ class Globals extends Component
     /**
      * @event GlobalSetEvent The event that is triggered before a global set is saved.
      */
-    const EVENT_BEFORE_SAVE_GLOBAL_SET = 'beforeSaveGlobalSet';
+    public const EVENT_BEFORE_SAVE_GLOBAL_SET = 'beforeSaveGlobalSet';
 
     /**
      * @event GlobalSetEvent The event that is triggered after a global set is saved.
      */
-    const EVENT_AFTER_SAVE_GLOBAL_SET = 'afterSaveGlobalSet';
-
-    const CONFIG_GLOBALSETS_KEY = 'globalSets';
+    public const EVENT_AFTER_SAVE_GLOBAL_SET = 'afterSaveGlobalSet';
 
     /**
      * @var MemoizableArray<GlobalSet>[]|null
      * @see _allSets()
      */
-    private $_allGlobalSets;
+    private ?array $_allGlobalSets = null;
 
     /**
      * @var GlobalSet[][]|null
      * @see getEditableSets()
      */
-    private $_editableGlobalSets;
+    private ?array $_editableGlobalSets = null;
 
     /**
      * Serializer
@@ -212,7 +212,7 @@ class Globals extends Component
      * @param int|null $siteId
      * @return GlobalSet|null
      */
-    public function getSetById(int $globalSetId, int $siteId = null)
+    public function getSetById(int $globalSetId, ?int $siteId = null): ?GlobalSet
     {
         /** @noinspection PhpUnhandledExceptionInspection */
         $currentSiteId = Craft::$app->getSites()->getCurrentSite()->id;
@@ -225,6 +225,7 @@ class Globals extends Component
             return $this->_allSets($siteId)->firstWhere('id', $globalSetId);
         }
 
+        /** @var GlobalSet|null */
         return GlobalSet::find()
             ->siteId($siteId)
             ->id($globalSetId)
@@ -247,7 +248,7 @@ class Globals extends Component
      * @param int|null $siteId
      * @return GlobalSet|null
      */
-    public function getSetByHandle(string $globalSetHandle, int $siteId = null)
+    public function getSetByHandle(string $globalSetHandle, ?int $siteId = null): ?GlobalSet
     {
         /** @noinspection PhpUnhandledExceptionInspection */
         $currentSiteId = Craft::$app->getSites()->getCurrentSite()->id;
@@ -260,9 +261,10 @@ class Globals extends Component
             return $this->_allSets($siteId)->firstWhere('handle', $globalSetHandle, true);
         }
 
+        /** @var GlobalSet|null */
         return GlobalSet::find()
-            ->siteId($siteId)
             ->handle($globalSetHandle)
+            ->siteId($siteId)
             ->one();
     }
 
@@ -273,7 +275,7 @@ class Globals extends Component
      * @param bool $runValidation Whether the global set should be validated
      * @return bool
      * @throws GlobalSetNotFoundException if $globalSet->id is invalid
-     * @throws \Throwable if reasons
+     * @throws Throwable if reasons
      */
     public function saveSet(GlobalSet $globalSet, bool $runValidation = true): bool
     {
@@ -298,11 +300,11 @@ class Globals extends Component
             $globalSet->sortOrder = (new Query())
                     ->from([Table::GLOBALSETS])
                     ->max('[[sortOrder]]') + 1;
-        } else if (!$globalSet->uid) {
+        } elseif (!$globalSet->uid) {
             $globalSet->uid = Db::uidById(Table::GLOBALSETS, $globalSet->id);
         }
 
-        $configPath = self::CONFIG_GLOBALSETS_KEY . '.' . $globalSet->uid;
+        $configPath = ProjectConfig::PATH_GLOBAL_SETS . '.' . $globalSet->uid;
         $configData = $globalSet->getConfig();
         Craft::$app->getProjectConfig()->set($configPath, $configData, "Save global set “{$globalSet->handle}”");
 
@@ -318,7 +320,7 @@ class Globals extends Component
      *
      * @param ConfigEvent $event
      */
-    public function handleChangedGlobalSet(ConfigEvent $event)
+    public function handleChangedGlobalSet(ConfigEvent $event): void
     {
         $globalSetUid = $event->tokenMatches[0];
         $data = $event->newValue;
@@ -343,9 +345,9 @@ class Globals extends Component
                 $layout->id = $globalSetRecord->fieldLayoutId;
                 $layout->type = GlobalSet::class;
                 $layout->uid = key($data['fieldLayouts']);
-                Craft::$app->getFields()->saveLayout($layout);
+                Craft::$app->getFields()->saveLayout($layout, false);
                 $globalSetRecord->fieldLayoutId = $layout->id;
-            } else if ($globalSetRecord->fieldLayoutId) {
+            } elseif ($globalSetRecord->fieldLayoutId) {
                 // Delete the field layout
                 Craft::$app->getFields()->deleteLayoutById($globalSetRecord->fieldLayoutId);
                 $globalSetRecord->fieldLayoutId = null;
@@ -355,6 +357,7 @@ class Globals extends Component
             $element = null;
             $elementsService = Craft::$app->getElements();
             if (!$globalSetRecord->getIsNewRecord()) {
+                /** @var GlobalSet|null $element */
                 $element = GlobalSet::find()
                     ->id($globalSetRecord->id)
                     ->trashed(null)
@@ -389,7 +392,7 @@ class Globals extends Component
             $globalSetRecord->save(false);
 
             $transaction->commit();
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             $transaction->rollBack();
             throw $e;
         }
@@ -415,7 +418,7 @@ class Globals extends Component
      *
      * @param array $setIds
      * @return bool
-     * @throws \Throwable
+     * @throws Throwable
      * @since 3.7.0
      */
     public function reorderSets(array $setIds): bool
@@ -427,7 +430,7 @@ class Globals extends Component
         foreach ($setIds as $i => $setId) {
             if (!empty($uidsByIds[$setId])) {
                 $setUid = $uidsByIds[$setId];
-                $projectConfig->set(self::CONFIG_GLOBALSETS_KEY . ".$setUid.sortOrder", $i + 1, 'Reorder global sets');
+                $projectConfig->set(ProjectConfig::PATH_GLOBAL_SETS . ".$setUid.sortOrder", $i + 1, 'Reorder global sets');
             }
         }
 
@@ -439,7 +442,7 @@ class Globals extends Component
      *
      * @param int $globalSetId
      * @return bool Whether the global set was deleted successfully
-     * @throws \Throwable if reasons
+     * @throws Throwable if reasons
      */
     public function deleteGlobalSetById(int $globalSetId): bool
     {
@@ -465,7 +468,7 @@ class Globals extends Component
      */
     public function deleteSet(GlobalSet $globalSet): void
     {
-        Craft::$app->getProjectConfig()->remove(self::CONFIG_GLOBALSETS_KEY . '.' . $globalSet->uid, "Delete the “{$globalSet->handle}” global set");
+        Craft::$app->getProjectConfig()->remove(ProjectConfig::PATH_GLOBAL_SETS . '.' . $globalSet->uid, "Delete the “{$globalSet->handle}” global set");
     }
 
     /**
@@ -473,7 +476,7 @@ class Globals extends Component
      *
      * @param ConfigEvent $event
      */
-    public function handleDeletedGlobalSet(ConfigEvent $event)
+    public function handleDeletedGlobalSet(ConfigEvent $event): void
     {
         $uid = $event->tokenMatches[0];
         $globalSetRecord = $this->_getGlobalSetRecord($uid);
@@ -499,7 +502,7 @@ class Globals extends Component
             Craft::$app->getElements()->deleteElementById($globalSetRecord->id);
 
             $transaction->commit();
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             $transaction->rollBack();
             throw $e;
         }
@@ -513,13 +516,13 @@ class Globals extends Component
      *
      * @param FieldEvent $event
      */
-    public function pruneDeletedField(FieldEvent $event)
+    public function pruneDeletedField(FieldEvent $event): void
     {
         $field = $event->field;
         $fieldUid = $field->uid;
 
         $projectConfig = Craft::$app->getProjectConfig();
-        $globalSets = $projectConfig->get(self::CONFIG_GLOBALSETS_KEY);
+        $globalSets = $projectConfig->get(ProjectConfig::PATH_GLOBAL_SETS);
 
         // Engage stealth mode
         $projectConfig->muteEvents = true;
@@ -531,7 +534,7 @@ class Globals extends Component
                     foreach ($globalSet['fieldLayouts'] as $layoutUid => $layout) {
                         if (!empty($layout['tabs'])) {
                             foreach ($layout['tabs'] as $tabUid => $tab) {
-                                $projectConfig->remove(self::CONFIG_GLOBALSETS_KEY . '.' . $globalSetUid . '.fieldLayouts.' . $layoutUid . '.tabs.' . $tabUid . '.fields.' . $fieldUid, 'Prune deleted field');
+                                $projectConfig->remove(ProjectConfig::PATH_GLOBAL_SETS . '.' . $globalSetUid . '.fieldLayouts.' . $layoutUid . '.tabs.' . $tabUid . '.fields.' . $fieldUid, 'Prune deleted field');
                             }
                         }
                     }
@@ -584,6 +587,8 @@ class Globals extends Component
     {
         $query = $withTrashed ? GlobalSetRecord::findWithTrashed() : GlobalSetRecord::find();
         $query->andWhere(['uid' => $uid]);
+        /** @noinspection PhpIncompatibleReturnTypeInspection */
+        /** @var GlobalSetRecord */
         return $query->one() ?? new GlobalSetRecord();
     }
 }

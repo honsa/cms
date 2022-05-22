@@ -34,20 +34,20 @@ class LoginAsset extends AssetBundle
      * @inheritdoc
      */
     public $css = [
-        'login.css',
+        'css/login.css',
     ];
 
     /**
      * @inheritdoc
      */
     public $js = [
-        'login.min.js',
+        'login.js',
     ];
 
     /**
      * @inheritdoc
      */
-    public function registerAssetFiles($view)
+    public function registerAssetFiles($view): void
     {
         parent::registerAssetFiles($view);
 
@@ -56,7 +56,7 @@ class LoginAsset extends AssetBundle
                 'Check your email for instructions to reset your password.',
                 'Invalid email.',
                 'Invalid username or email.',
-                'Login',
+                'Sign in',
                 'Password',
                 'Reset Password',
             ]);

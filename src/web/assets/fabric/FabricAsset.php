@@ -17,9 +17,9 @@ class FabricAsset extends AssetBundle
     /**
      * @inheritdoc
      */
-    public function init()
+    public function init(): void
     {
-        $this->sourcePath = '@lib/fabric';
+        $this->sourcePath = __DIR__ . '/dist';
 
         $this->js = [
             'fabric.js',

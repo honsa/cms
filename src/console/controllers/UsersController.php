@@ -9,9 +9,15 @@ namespace craft\console\controllers;
 
 use Craft;
 use craft\console\Controller;
+use craft\db\Table;
 use craft\elements\User;
 use craft\helpers\ArrayHelper;
 use craft\helpers\Console;
+use craft\helpers\Db;
+use craft\helpers\UrlHelper;
+use DateTime;
+use Throwable;
+use yii\base\InvalidArgumentException;
 use yii\console\ExitCode;
 
 /**
@@ -26,59 +32,59 @@ class UsersController extends Controller
      * @var string|null The user’s email address.
      * @since 3.7.0
      */
-    public $email;
+    public ?string $email = null;
 
     /**
      * @var string|null The user’s username.
      * @since 3.7.0
      */
-    public $username;
+    public ?string $username = null;
 
     /**
      * @var string|null The user’s new password.
      */
-    public $password;
+    public ?string $password = null;
 
     /**
      * @var bool|null Whether the user should be an admin.
      * @since 3.7.0
      */
-    public $admin;
+    public ?bool $admin = null;
 
     /**
      * @var string[] The group handles to assign the created user to.
      * @since 3.7.0
      */
-    public $groups = [];
+    public array $groups = [];
 
     /**
      * @var int[] The group IDs to assign the user to the created user to.
      * @since 3.7.0
      */
-    public $groupIds = [];
+    public array $groupIds = [];
 
     /**
      * @var string|null The email or username of the user to inherit content when deleting a user.
      * @since 3.7.0
      */
-    public $inheritor;
+    public ?string $inheritor = null;
 
     /**
      * @var bool Whether to delete the user’s content if no inheritor is specified.
      * @since 3.7.0
      */
-    public $deleteContent = false;
+    public bool $deleteContent = false;
 
     /**
      * @var bool Whether the user should be hard-deleted immediately, instead of soft-deleted.
      * @since 3.7.0
      */
-    public $hard = false;
+    public bool $hard = false;
 
     /**
      * @inheritdoc
      */
-    public function options($actionID)
+    public function options($actionID): array
     {
         $options = parent::options($actionID);
 
@@ -111,9 +117,10 @@ class UsersController extends Controller
      */
     public function actionListAdmins(): int
     {
+        /** @var User[] $users */
         $users = User::find()
             ->admin()
-            ->anyStatus()
+            ->status(null)
             ->orderBy(['username' => SORT_ASC])
             ->all();
         $total = count($users);
@@ -188,7 +195,7 @@ class UsersController extends Controller
 
         if ($this->password) {
             $user->newPassword = $this->password;
-        } else if ($this->interactive) {
+        } elseif ($this->interactive) {
             if ($this->confirm('Set a password for this user?', false)) {
                 $user->newPassword = $this->passwordPrompt([
                     'validator' => $this->createAttributeValidator($user, 'newPassword'),
@@ -219,7 +226,7 @@ class UsersController extends Controller
         // Most likely an invalid group ID will throw…
         try {
             Craft::$app->getUsers()->assignUserToGroups($user->id, $groupIds);
-        } catch (\Throwable $e) {
+        } catch (Throwable) {
             $this->stderr('failed: Couldn’t assign user to specified groups.' . PHP_EOL, Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }
@@ -229,22 +236,73 @@ class UsersController extends Controller
     }
 
     /**
-     * Deletes a user.
+     * Generates an activation URL for a pending user.
      *
-     * @param string $usernameOrEmail The user’s username or email address.
+     * @param string $user The ID, username, or email address of the user account.
      * @return int
      */
-    public function actionDelete(string $usernameOrEmail): int
+    public function actionActivationUrl(string $user): int
     {
-        $user = Craft::$app->getUsers()->getUserByUsernameOrEmail($usernameOrEmail);
+        try {
+            $user = $this->_user($user);
+        } catch (InvalidArgumentException $e) {
+            $this->stderr($e->getMessage() . PHP_EOL, Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
 
-        if (!$user) {
-            $this->stderr("No user exists with a username/email of “{$usernameOrEmail}”." . PHP_EOL, Console::FG_RED);
+        if (!$user->pending) {
+            $this->stderr("User “{$user->username}” has already been activated." . PHP_EOL, Console::FG_RED);
+            return ExitCode::USAGE;
+        }
+
+        $url = Craft::$app->getUsers()->getActivationUrl($user);
+
+        $this->stdout("Activation URL for “{$user->username}”: ");
+        $this->stdout($url . PHP_EOL, Console::FG_CYAN, PHP_EOL);
+
+        return ExitCode::OK;
+    }
+
+    /**
+     * Generates a password reset URL for a user.
+     *
+     * @param string $user The ID, username, or email address of the user account.
+     * @return int
+     */
+    public function actionPasswordResetUrl(string $user): int
+    {
+        try {
+            $user = $this->_user($user);
+        } catch (InvalidArgumentException $e) {
+            $this->stderr($e->getMessage() . PHP_EOL, Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+
+        $url = Craft::$app->getUsers()->getPasswordResetUrl($user);
+
+        $this->stdout("Password reset URL for “{$user->username}”: ");
+        $this->stdout($url . PHP_EOL, Console::FG_CYAN, PHP_EOL);
+
+        return ExitCode::OK;
+    }
+
+    /**
+     * Deletes a user.
+     *
+     * @param string $user The ID, username, or email address of the user account.
+     * @return int
+     */
+    public function actionDelete(string $user): int
+    {
+        try {
+            $user = $this->_user($user);
+        } catch (InvalidArgumentException $e) {
+            $this->stderr($e->getMessage() . PHP_EOL, Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }
 
         if ($this->deleteContent && $this->inheritor) {
-            $this->stdout('Only one of --delete-content or --inheritor may be specified.' . PHP_EOL, Console::FG_RED);
+            $this->stderr('Only one of --delete-content or --inheritor may be specified.' . PHP_EOL, Console::FG_RED);
             return ExitCode::USAGE;
         }
 
@@ -262,23 +320,23 @@ class UsersController extends Controller
                 return ExitCode::UNSPECIFIED_ERROR;
             }
 
-            if (!$this->confirm("Delete user “{$usernameOrEmail}” and transfer their content to user “{$this->inheritor}”?")) {
+            if (!$this->confirm("Delete user “{$user->username}” and transfer their content to user “{$inheritor->username}”?")) {
                 $this->stdout('Aborting.' . PHP_EOL);
-                return ExitCode::USAGE;
+                return ExitCode::OK;
             }
 
             $user->inheritorOnDelete = $inheritor;
-        } else if ($this->interactive) {
-            $this->deleteContent = $this->confirm("Delete user “{$usernameOrEmail}” and their content?");
+        } elseif ($this->interactive) {
+            $this->deleteContent = $this->confirm("Delete user “{$user->username}” and their content?");
 
             if (!$this->deleteContent) {
                 $this->stdout('Aborting.' . PHP_EOL);
-                return ExitCode::USAGE;
+                return ExitCode::OK;
             }
         }
 
         if (!$user->inheritorOnDelete && !$this->deleteContent) {
-            $this->stdout('You must specify either --delete-content or --inheritor to proceed.' . PHP_EOL, Console::FG_RED);
+            $this->stderr('You must specify either --delete-content or --inheritor to proceed.' . PHP_EOL, Console::FG_RED);
             return ExitCode::USAGE;
         }
 
@@ -296,15 +354,15 @@ class UsersController extends Controller
     /**
      * Changes a user’s password.
      *
-     * @param string $usernameOrEmail The user’s username or email address
+     * @param string $user The ID, username, or email address of the user account.
      * @return int
      */
-    public function actionSetPassword(string $usernameOrEmail): int
+    public function actionSetPassword(string $user): int
     {
-        $user = Craft::$app->getUsers()->getUserByUsernameOrEmail($usernameOrEmail);
-
-        if (!$user) {
-            $this->stderr("No user exists with a username/email of “{$usernameOrEmail}”." . PHP_EOL, Console::FG_RED);
+        try {
+            $user = $this->_user($user);
+        } catch (InvalidArgumentException $e) {
+            $this->stderr($e->getMessage() . PHP_EOL, Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }
 
@@ -316,7 +374,7 @@ class UsersController extends Controller
                 $this->stderr('Unable to set new password on user: ' . $user->getFirstError('newPassword') . PHP_EOL, Console::FG_RED);
                 return ExitCode::UNSPECIFIED_ERROR;
             }
-        } else if ($this->interactive) {
+        } elseif ($this->interactive) {
             $this->passwordPrompt([
                 'validator' => $this->createAttributeValidator($user, 'newPassword'),
             ]);
@@ -327,5 +385,81 @@ class UsersController extends Controller
         $this->stdout('done' . PHP_EOL, Console::FG_GREEN);
 
         return ExitCode::OK;
+    }
+
+    /**
+     * Generates a URL to impersonate a user.
+     *
+     * @param string $user The ID, username, or email address of the user account.
+     * @return int
+     * @since 3.7.15
+     */
+    public function actionImpersonate(string $user): int
+    {
+        try {
+            $user = $this->_user($user);
+        } catch (InvalidArgumentException $e) {
+            $this->stderr($e->getMessage() . PHP_EOL, Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+
+        $token = Craft::$app->getTokens()->createToken([
+            'users/impersonate-with-token', [
+                'userId' => $user->id,
+                'prevUserId' => $user->id,
+            ],
+        ], 1, new DateTime('+1 hour'));
+
+        if (!$token) {
+            $this->stderr('Unable to create the impersonation token.' . PHP_EOL, Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+
+        $url = $user->can('accessCp') ? UrlHelper::cpUrl() : UrlHelper::siteUrl();
+        $url = UrlHelper::urlWithToken($url, $token);
+
+        $this->stdout("Impersonation URL for “{$user->username}”: ");
+        $this->stdout($url . PHP_EOL, Console::FG_CYAN);
+        $this->stdout('(Expires in one hour.)' . PHP_EOL, Console::FG_GREY);
+
+        return ExitCode::OK;
+    }
+
+    /**
+     * Logs all users out of the system.
+     *
+     * @return int
+     * @since 3.7.33
+     */
+    public function actionLogoutAll(): int
+    {
+        $this->stdout('Logging all users out ... ');
+        Db::truncateTable(Table::SESSIONS);
+        $this->stdout("done\n", Console::FG_GREEN);
+        return ExitCode::OK;
+    }
+
+    /**
+     * Resolves a `user` argument.
+     *
+     * @param string $value The `user` argument value
+     * @return User
+     * @throws InvalidArgumentException if the user could not be found
+     */
+    private function _user(string $value): User
+    {
+        if (is_numeric($value)) {
+            $user = Craft::$app->getUsers()->getUserById((int)$value);
+            if (!$user) {
+                throw new InvalidArgumentException("No user exists with the ID: $value");
+            }
+        } else {
+            $user = Craft::$app->getUsers()->getUserByUsernameOrEmail($value);
+            if (!$user) {
+                throw new InvalidArgumentException("No user exists with the username/email: $value");
+            }
+        }
+
+        return $user;
     }
 }

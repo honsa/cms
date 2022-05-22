@@ -24,33 +24,33 @@ class UserGroup extends Model
     /**
      * @var int|null ID
      */
-    public $id;
+    public ?int $id = null;
 
     /**
      * @var string|null Name
      */
-    public $name;
+    public ?string $name = null;
 
     /**
      * @var string|null Handle
      */
-    public $handle;
+    public ?string $handle = null;
 
     /**
      * @var string|null Description
      * @since 3.5.0
      */
-    public $description;
+    public ?string $description = null;
 
     /**
      * @var string|null UID
      */
-    public $uid;
+    public ?string $uid = null;
 
     /**
      * @inheritdoc
      */
-    public function attributeLabels()
+    public function attributeLabels(): array
     {
         return [
             'handle' => Craft::t('app', 'Handle'),
@@ -67,7 +67,22 @@ class UserGroup extends Model
         $rules[] = [['id'], 'number', 'integerOnly' => true];
         $rules[] = [['name', 'handle'], 'required'];
         $rules[] = [['name', 'handle'], 'string', 'max' => 255];
-        $rules[] = [['handle'], HandleValidator::class, 'reservedWords' => ['id', 'dateCreated', 'dateUpdated', 'uid', 'title']];
+        $rules[] = [
+            ['handle'],
+            HandleValidator::class,
+            'reservedWords' => [
+                'admins',
+                'all',
+                'credentialed',
+                'dateCreated',
+                'dateUpdated',
+                'id',
+                'inactive',
+                'new',
+                'title',
+                'uid',
+            ],
+        ];
         $rules[] = [['name', 'handle'], UniqueValidator::class, 'targetClass' => UserGroupRecord::class];
         return $rules;
     }
@@ -98,7 +113,7 @@ class UserGroup extends Model
     }
 
     /**
-     * Returns the field layout config for this user group.
+     * Returns the user group’s config.
      *
      * @param bool $withPermissions Whether permissions should be included
      * @return array
@@ -113,7 +128,9 @@ class UserGroup extends Model
         ];
 
         if ($withPermissions && $this->id) {
-            $config['permissions'] = Craft::$app->getUserPermissions()->getPermissionsByGroupId($this->id);
+            $permissions = Craft::$app->getUserPermissions()->getPermissionsByGroupId($this->id);
+            sort($permissions);
+            $config['permissions'] = $permissions;
         }
 
         return $config;

@@ -19,7 +19,7 @@ class DatepickerI18nAsset extends AssetBundle
     /**
      * @inheritdoc
      */
-    public function init()
+    public function init(): void
     {
         // Figure out which Datepicker i18n script to load
         $language = Craft::$app->language;
@@ -36,14 +36,14 @@ class DatepickerI18nAsset extends AssetBundle
 
         /** @noinspection UnSafeIsSetOverArrayInspection */
         if (isset($datepickerLanguage)) {
-            $this->sourcePath = '@lib/datepicker-i18n';
+            $this->sourcePath = __DIR__ . '/dist';
 
             $this->depends = [
                 JqueryUiAsset::class,
             ];
 
             $this->js = [
-                "datepicker-{$datepickerLanguage}.js",
+                "datepicker-$datepickerLanguage.js",
             ];
         }
 
