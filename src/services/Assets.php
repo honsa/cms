@@ -91,6 +91,12 @@ class Assets extends Component
     private array $_foldersByUid = [];
 
     /**
+     * @var VolumeFolder[]
+     * @see getUserTemporaryUploadFolder
+     */
+    private $_userTempFolders = [];
+
+    /**
      * Returns a file by its ID.
      *
      * @param int $assetId
@@ -170,14 +176,22 @@ class Assets extends Component
      */
     public function moveAsset(Asset $asset, VolumeFolder $folder, string $filename = ''): bool
     {
-        $asset->newFolderId = $folder->id;
+        $folderChanging = $asset->folderId != $folder->id;
+        $filenameChanging = $filename !== '' && $filename !== $asset->getFilename();
 
-        // If the filename hasn’t changed, then we can use the `move` scenario
-        if ($filename === '' || $filename === $asset->getFilename()) {
-            $asset->setScenario(Asset::SCENARIO_MOVE);
-        } else {
+        if (!$folderChanging && !$filenameChanging) {
+            return true;
+        }
+
+        if ($folderChanging) {
+            $asset->newFolderId = $folder->id;
+        }
+
+        if ($filenameChanging) {
             $asset->newFilename = $filename;
             $asset->setScenario(Asset::SCENARIO_FILEOPS);
+        } else {
+            $asset->setScenario(Asset::SCENARIO_MOVE);
         }
 
         return Craft::$app->getElements()->saveElement($asset);
@@ -340,7 +354,7 @@ class Assets extends Component
             // Add additional criteria but prevent overriding volumeId and order.
             $criteria = array_merge($additionalCriteria, [
                 'volumeId' => $volumeId,
-                'order' => [new Expression('path IS NULL DESC'), 'path' => SORT_ASC],
+                'order' => [new Expression('[[path]] IS NULL DESC'), 'path' => SORT_ASC],
             ]);
             $cacheKey = md5(Json::encode($criteria));
 
@@ -527,7 +541,7 @@ class Assets extends Component
     {
         return $this->findFolder([
             'volumeId' => $volumeId,
-            'parentId' => ':empty:',
+            'parentId' => null,
         ]);
     }
 
@@ -898,6 +912,10 @@ class Assets extends Component
             $user = Craft::$app->getUser()->getIdentity();
         }
 
+        if (isset($this->_userTempFolders[$user->id])) {
+            return $this->_userTempFolders[$user->id];
+        }
+
         if ($user) {
             $folderName = 'user_' . $user->id;
         } elseif (Craft::$app->getRequest()->getIsConsoleRequest()) {
@@ -919,12 +937,12 @@ class Assets extends Component
 
         if ($tempVolume) {
             $path = ($tempSubpath ? "$tempSubpath/" : '') . $folderName;
-            return $this->ensureFolderByFullPathAndVolume($path, $tempVolume, false);
+            return $this->_userTempFolders[$user->id] = $this->ensureFolderByFullPathAndVolume($path, $tempVolume);
         }
 
         $volumeTopFolder = $this->findFolder([
-            'volumeId' => ':empty:',
-            'parentId' => ':empty:',
+            'volumeId' => null,
+            'parentId' => null,
         ]);
 
         // Unlikely, but would be very awkward if this happened without any contingency plans in place.
@@ -954,7 +972,7 @@ class Assets extends Component
             throw new VolumeException('Unable to create directory for temporary volume.');
         }
 
-        return $folder;
+        return $this->_userTempFolders[$user->id] = $folder;
     }
 
     /**

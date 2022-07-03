@@ -37,6 +37,11 @@ use yii\db\Expression;
 class UserQuery extends ElementQuery
 {
     /**
+     * @since 4.0.4
+     */
+    public const STATUS_CREDENTIALED = 'credentialed';
+
+    /**
      * @inheritdoc
      */
     protected array $defaultOrderBy = ['users.username' => SORT_ASC];
@@ -482,9 +487,9 @@ class UserQuery extends ElementQuery
      *
      * | Value | Fetches users…
      * | - | -
-     * | `'foo@bar.baz'` | with an email of `foo@bar.baz`.
-     * | `'not foo@bar.baz'` | not with an email of `foo@bar.baz`.
-     * | `'*@bar.baz'` | with an email that ends with `@bar.baz`.
+     * | `'me@domain.tld'` | with an email of `me@domain.tld`.
+     * | `'not me@domain.tld'` | not with an email of `me@domain.tld`.
+     * | `'*@domain.tld'` | with an email that ends with `@domain.tld`.
      *
      * ---
      *
@@ -711,9 +716,11 @@ class UserQuery extends ElementQuery
      *
      * | Value | Fetches users…
      * | - | -
-     * | `'active'` _(default)_ | with active accounts.
-     * | `'suspended'` | with suspended accounts.
+     * | `'inactive'` | with inactive accounts.
+     * | `'active'` | with active accounts.
      * | `'pending'` | with accounts that are still pending activation.
+     * | `'credentialed'` | with either active or pending accounts.
+     * | `'suspended'` | with suspended accounts.
      * | `'locked'` | with locked accounts (regardless of whether they’re active or suspended).
      * | `['active', 'suspended']` | with active or suspended accounts.
      * | `['not', 'active', 'suspended']` | without active or suspended accounts.
@@ -938,15 +945,21 @@ class UserQuery extends ElementQuery
             ],
             User::STATUS_ACTIVE => [
                 'users.active' => true,
+                'users.suspended' => false,
             ],
             User::STATUS_PENDING => [
                 'users.pending' => true,
             ],
-            User::STATUS_LOCKED => [
-                'users.locked' => true,
+            self::STATUS_CREDENTIALED => [
+                'or',
+                ['users.active' => true],
+                ['users.pending' => true],
             ],
             User::STATUS_SUSPENDED => [
                 'users.suspended' => true,
+            ],
+            User::STATUS_LOCKED => [
+                'users.locked' => true,
             ],
             default => parent::statusCondition($status),
         };
