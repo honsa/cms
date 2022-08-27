@@ -236,29 +236,34 @@ class ElementsController extends Controller
         $this->requireCpRequest();
 
         $strictSite = $this->request->getAcceptsJson();
-        /** @var Element|DraftBehavior|RevisionBehavior|Response|null $element */
-        $element = $element ?? $this->_element($elementId, null, true, $strictSite);
 
-        if ($element instanceof Response) {
-            return $element;
-        }
+        if ($element === null) {
+            /** @var Element|DraftBehavior|RevisionBehavior|Response|null $element */
+            $element = $this->_element($elementId, null, true, $strictSite);
 
-        if (!$element) {
-            throw new BadRequestHttpException('No element was identified by the request.');
-        }
+            if ($element instanceof Response) {
+                return $element;
+            }
 
-        // If this is an outdated draft, merge in the latest canonical changes
-        $mergeCanonicalChanges = $element->getIsDraft() && !$element->getIsUnpublishedDraft() && ElementHelper::isOutdated($element);
-        if ($mergeCanonicalChanges) {
-            Craft::$app->getElements()->mergeCanonicalChanges($element);
-        }
+            if (!$element) {
+                throw new BadRequestHttpException('No element was identified by the request.');
+            }
 
-        $this->_applyParamsToElement($element);
+            // If this is an outdated draft, merge in the latest canonical changes
+            $mergeCanonicalChanges = $element->getIsDraft() && !$element->getIsUnpublishedDraft() && ElementHelper::isOutdated($element);
+            if ($mergeCanonicalChanges) {
+                Craft::$app->getElements()->mergeCanonicalChanges($element);
+            }
 
-        // Prevalidate?
-        if ($this->_prevalidate && $element->enabled && $element->getEnabledForSite()) {
-            $element->setScenario(Element::SCENARIO_LIVE);
-            $element->validate();
+            $this->_applyParamsToElement($element);
+
+            // Prevalidate?
+            if ($this->_prevalidate && $element->enabled && $element->getEnabledForSite()) {
+                $element->setScenario(Element::SCENARIO_LIVE);
+                $element->validate();
+            }
+        } else {
+            $mergeCanonicalChanges = false;
         }
 
         $user = Craft::$app->getUser()->getIdentity();
@@ -645,6 +650,9 @@ class ElementsController extends Controller
                 ($enablePreview
                     ? Html::button(Craft::t('app', 'Preview'), [
                         'class' => ['preview-btn', 'btn'],
+                        'aria' => [
+                            'label' => Craft::t('app', 'Preview'),
+                        ],
                     ])
                     : '') .
                 Html::endTag('div');
@@ -1685,7 +1693,9 @@ JS, [
             'modelName' => 'element',
             'element' => $element->toArray($element->attributes()),
         ];
-        $response = $this->asSuccess($message, $data, $this->getPostedRedirectUrl($element));
+        $response = $this->asSuccess($message, $data, $this->getPostedRedirectUrl($element), [
+            'details' => !$element->dateDeleted ? Cp::elementHtml($element) : null,
+        ]);
 
         if ($addAnother && $this->_addAnother) {
             $user = Craft::$app->getUser()->getIdentity();
@@ -1725,7 +1735,12 @@ JS, [
 
     private function _asFailure(ElementInterface $element, string $message): ?Response
     {
-        /** @var Element $element */
-        return $this->asModelFailure($element, $message, 'element');
+        $data = [
+            'modelName' => 'element',
+            'element' => $element->toArray($element->attributes()),
+            'errors' => $element->getErrors(),
+        ];
+
+        return $this->asFailure($message, $data, ['element' => $element]);
     }
 }
