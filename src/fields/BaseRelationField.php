@@ -22,6 +22,7 @@ use craft\elements\conditions\ElementConditionInterface;
 use craft\elements\db\ElementQuery;
 use craft\elements\db\ElementQueryInterface;
 use craft\elements\db\ElementRelationParamParser;
+use craft\elements\ElementCollection;
 use craft\errors\SiteNotFoundException;
 use craft\events\ElementCriteriaEvent;
 use craft\events\ElementEvent;
@@ -99,7 +100,7 @@ abstract class BaseRelationField extends Field implements PreviewableFieldInterf
      */
     public static function valueType(): string
     {
-        return ElementQueryInterface::class;
+        return sprintf('%s|%s<%s>', ElementQueryInterface::class, ElementCollection::class, ElementInterface::class);
     }
 
     /**
@@ -191,12 +192,12 @@ abstract class BaseRelationField extends Field implements PreviewableFieldInterf
     /**
      * @var string Template to use for settings rendering
      */
-    protected string $settingsTemplate = '_components/fieldtypes/elementfieldsettings';
+    protected string $settingsTemplate = '_components/fieldtypes/elementfieldsettings.twig';
 
     /**
      * @var string Template to use for field rendering
      */
-    protected string $inputTemplate = '_includes/forms/elementSelect';
+    protected string $inputTemplate = '_includes/forms/elementSelect.twig';
 
     /**
      * @var string|null The JS class that should be initialized for the input
@@ -984,6 +985,8 @@ JS;
             $selectionCondition->id = 'selection-condition';
             $selectionCondition->name = 'selectionCondition';
             $selectionCondition->forProjectConfig = true;
+            $selectionCondition->queryParams[] = 'site';
+            $selectionCondition->queryParams[] = 'status';
 
             $selectionConditionHtml = Cp::fieldHtml($selectionCondition->getBuilderHtml(), [
                 'label' => Craft::t('app', 'Selectable {type} Condition', [

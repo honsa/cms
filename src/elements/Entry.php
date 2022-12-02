@@ -10,6 +10,7 @@ namespace craft\elements;
 use Craft;
 use craft\base\Element;
 use craft\base\ElementInterface;
+use craft\base\ExpirableElementInterface;
 use craft\base\Field;
 use craft\behaviors\DraftBehavior;
 use craft\behaviors\RevisionBehavior;
@@ -67,7 +68,7 @@ use yii\web\Response;
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 3.0.0
  */
-class Entry extends Element
+class Entry extends Element implements ExpirableElementInterface
 {
     public const STATUS_LIVE = 'live';
     public const STATUS_PENDING = 'pending';
@@ -340,7 +341,7 @@ class Entry extends Element
 
         // Get the section we need to check permissions on
         if (preg_match('/^section:(\d+)$/', $source, $matches)) {
-            $section = Craft::$app->getSections()->getSectionById($matches[1]);
+            $section = Craft::$app->getSections()->getSectionById((int)$matches[1]);
         } elseif (preg_match('/^section:(.+)$/', $source, $matches)) {
             $section = Craft::$app->getSections()->getSectionByUid($matches[1]);
         } else {
@@ -366,20 +367,17 @@ class Entry extends Element
 
                 $actions[] = $elementsService->createAction([
                     'type' => NewSiblingBefore::class,
-                    'label' => Craft::t('app', 'Create a new entry before'),
                     'newSiblingUrl' => $newEntryUrl,
                 ]);
 
                 $actions[] = $elementsService->createAction([
                     'type' => NewSiblingAfter::class,
-                    'label' => Craft::t('app', 'Create a new entry after'),
                     'newSiblingUrl' => $newEntryUrl,
                 ]);
 
                 if ($section->maxLevels != 1) {
                     $actions[] = $elementsService->createAction([
                         'type' => NewChild::class,
-                        'label' => Craft::t('app', 'Create a new child entry'),
                         'maxLevels' => $section->maxLevels,
                         'newChildUrl' => $newEntryUrl,
                     ]);
@@ -423,14 +421,17 @@ class Entry extends Element
         }
 
         // Restore
-        $actions[] = $elementsService->createAction([
-            'type' => Restore::class,
-            'successMessage' => Craft::t('app', 'Entries restored.'),
-            'partialSuccessMessage' => Craft::t('app', 'Some entries restored.'),
-            'failMessage' => Craft::t('app', 'Entries not restored.'),
-        ]);
+        $actions[] = Restore::class;
 
         return $actions;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    protected static function includeSetStatusAction(): bool
+    {
+        return true;
     }
 
     /**
@@ -1023,6 +1024,14 @@ class Entry extends Element
     }
 
     /**
+     * @inheritdoc
+     */
+    public function getExpiryDate(): ?DateTime
+    {
+        return $this->expiryDate;
+    }
+
+    /**
      * Returns the entry’s section.
      *
      * ---
@@ -1462,9 +1471,11 @@ class Entry extends Element
             ];
 
             if ($section->type === Section::TYPE_STRUCTURE) {
+                $elementsService = Craft::$app->getElements();
                 $user = Craft::$app->getUser()->getIdentity();
+
                 foreach ($this->getCanonical()->getAncestors()->all() as $ancestor) {
-                    if ($ancestor->canView($user)) {
+                    if ($elementsService->canView($ancestor, $user)) {
                         $crumbs[] = [
                             'label' => $ancestor->title,
                             'url' => $ancestor->getCpEditUrl(),
@@ -1656,6 +1667,7 @@ EOD;
                     'limit' => 1,
                     'elements' => $parent ? [$parent] : [],
                     'disabled' => $static,
+                    'describedBy' => 'parentId-label',
                 ]);
             })();
         }
