@@ -1458,7 +1458,7 @@ class Elements extends Component
 
         // Clone any field values that are objects
         foreach ($mainClone->getFieldValues() as $handle => $value) {
-            if (is_object($value) && !$value instanceof UnitEnum) {
+            if (is_object($value) && (!class_exists(UnitEnum::class) || !$value instanceof UnitEnum)) {
                 $mainClone->setFieldValue($handle, clone $value);
             }
         }
@@ -1578,7 +1578,7 @@ class Elements extends Component
 
                     // Clone any field values that are objects
                     foreach ($siteClone->getFieldValues() as $handle => $value) {
-                        if (is_object($value) && !$value instanceof UnitEnum) {
+                        if (is_object($value) && (!class_exists(UnitEnum::class) || !$value instanceof UnitEnum)) {
                             $siteClone->setFieldValue($handle, clone $value);
                         }
                     }
@@ -2548,6 +2548,20 @@ class Elements extends Component
                     $filteredElements = $elements;
                 }
 
+                // filter out fields that are not part of this layout
+                // https://github.com/craftcms/cms/issues/12539
+                $filteredElements = array_values(
+                    array_filter($filteredElements, function($filteredElement) use ($plan) {
+                        $fieldLayout = $filteredElement->getFieldLayout();
+                        return $fieldLayout?->getFieldByHandle($plan->handle) !== null;
+                    })
+                );
+
+                // if we have nothing left in the $filteredElements, move on to the next iteration
+                if (empty($filteredElements)) {
+                    continue;
+                }
+
                 // Get the eager-loading map from the source element type
                 /** @var ElementInterface|string $elementType */
                 $map = $elementType::eagerLoadingMap($filteredElements, $plan->handle);
@@ -3375,6 +3389,8 @@ SQL;
     /**
      * Returns whether a user is authorized to duplicate the given element.
      *
+     * This should always be called in conjunction with [[canView()]] or [[canSave()]].
+     *
      * @param ElementInterface $element
      * @param User|null $user
      * @return bool
@@ -3395,6 +3411,8 @@ SQL;
     /**
      * Returns whether a user is authorized to delete the given element.
      *
+     * This should always be called in conjunction with [[canView()]] or [[canSave()]].
+     *
      * @param ElementInterface $element
      * @param User|null $user
      * @return bool
@@ -3414,6 +3432,8 @@ SQL;
 
     /**
      * Returns whether a user is authorized to delete the given element for its current site.
+     *
+     * This should always be called in conjunction with [[canView()]] or [[canSave()]].
      *
      * @param ElementInterface $element
      * @param User|null $user
@@ -3437,6 +3457,8 @@ SQL;
 
     /**
      * Returns whether a user is authorized to create drafts for the given element.
+     *
+     * This should always be called in conjunction with [[canView()]] or [[canSave()]].
      *
      * @param ElementInterface $element
      * @param User|null $user
