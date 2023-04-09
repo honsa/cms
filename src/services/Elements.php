@@ -414,6 +414,22 @@ class Elements extends Component
     public const EVENT_AUTHORIZE_DELETE_FOR_SITE = 'authorizeDeleteForSite';
 
     /**
+     * @event ElementEvent The event that is triggered before deleting an element for a single site.
+     * @see deleteElementForSite()
+     * @see deleteElementsForSite()
+     * @since 4.4.0
+     */
+    public const EVENT_BEFORE_DELETE_FOR_SITE = 'beforeDeleteForSite';
+
+    /**
+     * @event ElementEvent The event that is triggered after deleting an element for a single site.
+     * @see deleteElementForSite()
+     * @see deleteElementsForSite()
+     * @since 4.4.0
+     */
+    public const EVENT_AFTER_DELETE_FOR_SITE = 'afterDeleteForSite';
+
+    /**
      * @var int[] Stores a mapping of source element IDs to their duplicated element IDs.
      */
     public static array $duplicatedElementIds = [];
@@ -1022,13 +1038,20 @@ class Elements extends Component
      * (this can only be disabled when updating an existing element)
      * @param bool|null $updateSearchIndex Whether to update the element search index for the element
      * (this will happen via a background job if this is a web request)
+     * @param bool $forceTouch Whether to force the `dateUpdated` timestamp to be updated for the element,
+     * regardless of whether it’s being resaved
      * @return bool
      * @throws ElementNotFoundException if $element has an invalid $id
      * @throws Exception if the $element doesn’t have any supported sites
      * @throws Throwable if reasons
      */
-    public function saveElement(ElementInterface $element, bool $runValidation = true, bool $propagate = true, ?bool $updateSearchIndex = null): bool
-    {
+    public function saveElement(
+        ElementInterface $element,
+        bool $runValidation = true,
+        bool $propagate = true,
+        ?bool $updateSearchIndex = null,
+        bool $forceTouch = false,
+    ): bool {
         // Force propagation for new elements
         $propagate = !$element->id || $propagate;
 
@@ -1036,7 +1059,13 @@ class Elements extends Component
         $duplicateOf = $element->duplicateOf;
         $element->duplicateOf = null;
 
-        $success = $this->_saveElementInternal($element, $runValidation, $propagate, $updateSearchIndex);
+        $success = $this->_saveElementInternal(
+            $element,
+            $runValidation,
+            $propagate,
+            $updateSearchIndex,
+            forceTouch: $forceTouch,
+        );
         $element->duplicateOf = $duplicateOf;
         return $success;
     }
@@ -1325,13 +1354,6 @@ class Elements extends Component
                 /** @var ElementInterface $element */
                 $position++;
 
-                $element->setScenario(Element::SCENARIO_ESSENTIALS);
-                $supportedSites = ArrayHelper::index(ElementHelper::supportedSitesForElement($element), 'siteId');
-                $supportedSiteIds = array_keys($supportedSites);
-                $elementSiteIds = $siteIds !== null ? array_intersect($siteIds, $supportedSiteIds) : $supportedSiteIds;
-                /** @var string|ElementInterface $elementType */
-                $elementType = get_class($element);
-
                 // Fire a 'beforePropagateElement' event
                 if ($this->hasEventHandlers(self::EVENT_BEFORE_PROPAGATE_ELEMENT)) {
                     $this->trigger(self::EVENT_BEFORE_PROPAGATE_ELEMENT, new BatchElementActionEvent([
@@ -1340,6 +1362,13 @@ class Elements extends Component
                         'position' => $position,
                     ]));
                 }
+
+                $element->setScenario(Element::SCENARIO_ESSENTIALS);
+                $supportedSites = ArrayHelper::index(ElementHelper::supportedSitesForElement($element), 'siteId');
+                $supportedSiteIds = array_keys($supportedSites);
+                $elementSiteIds = $siteIds !== null ? array_intersect($siteIds, $supportedSiteIds) : $supportedSiteIds;
+                /** @var string|ElementInterface $elementType */
+                $elementType = get_class($element);
 
                 $e = null;
                 try {
@@ -1458,7 +1487,7 @@ class Elements extends Component
 
         // Clone any field values that are objects
         foreach ($mainClone->getFieldValues() as $handle => $value) {
-            if (is_object($value) && (!class_exists(UnitEnum::class) || !$value instanceof UnitEnum)) {
+            if (is_object($value) && (!interface_exists(UnitEnum::class) || !$value instanceof UnitEnum)) {
                 $mainClone->setFieldValue($handle, clone $value);
             }
         }
@@ -1578,7 +1607,7 @@ class Elements extends Component
 
                     // Clone any field values that are objects
                     foreach ($siteClone->getFieldValues() as $handle => $value) {
-                        if (is_object($value) && (!class_exists(UnitEnum::class) || !$value instanceof UnitEnum)) {
+                        if (is_object($value) && (!interface_exists(UnitEnum::class) || !$value instanceof UnitEnum)) {
                             $siteClone->setFieldValue($handle, clone $value);
                         }
                     }
@@ -2011,6 +2040,101 @@ class Elements extends Component
         }
 
         return true;
+    }
+
+    /**
+     * Deletes an element in the site it’s loaded in.
+     *
+     * @param ElementInterface $element
+     * @since 4.4.0
+     */
+    public function deleteElementForSite(ElementInterface $element): void
+    {
+        $this->deleteElementsForSite([$element]);
+    }
+
+    /**
+     * Deletes elements in the site they are currently loaded in.
+     *
+     * @param ElementInterface[] $elements
+     * @throws InvalidArgumentException if all elements don’t have the same type and site ID.
+     * @since 4.4.0
+     */
+    public function deleteElementsForSite(array $elements): void
+    {
+        if (empty($elements)) {
+            return;
+        }
+
+        // Make sure each element has the same type and site ID
+        $firstElement = reset($elements);
+        $elementType = get_class($firstElement);
+
+        foreach ($elements as $element) {
+            if (get_class($element) !== $elementType || $element->siteId !== $firstElement->siteId) {
+                throw new InvalidArgumentException('All elements must have the same type and site ID.');
+            }
+        }
+
+        // Separate the multi-site elements from the single-site elements
+        $multiSiteElementIds = $firstElement::find()
+            ->id(array_map(fn(ElementInterface $element) => $element->id, $elements))
+            ->siteId(['not', $firstElement->siteId])
+            ->unique()
+            ->select(['elements.id'])
+            ->column();
+
+        $multiSiteElementIdsIdx = array_flip($multiSiteElementIds);
+        $multiSiteElements = [];
+        $singleSiteElements = [];
+
+        foreach ($elements as $element) {
+            if (isset($multiSiteElementIdsIdx[$element->id])) {
+                $multiSiteElements[] = $element;
+            } else {
+                $singleSiteElements[] = $element;
+            }
+        }
+
+        if (!empty($multiSiteElements)) {
+            // Fire 'beforeDeleteForSite' events
+            if ($this->hasEventHandlers(self::EVENT_BEFORE_DELETE_FOR_SITE)) {
+                foreach ($multiSiteElements as $element) {
+                    $this->trigger(self::EVENT_BEFORE_DELETE_FOR_SITE, new ElementEvent([
+                        'element' => $element,
+                    ]));
+                }
+            }
+
+            // Delete the rows in elements_sites
+            Db::delete(Table::ELEMENTS_SITES, [
+                'elementId' => $multiSiteElementIds,
+                'siteId' => $firstElement->siteId,
+            ]);
+
+            // Resave them
+            $this->resaveElements(
+                $firstElement::find()->id($multiSiteElementIds)->site('*')->unique(),
+                true,
+                updateSearchIndex: false
+            );
+
+            // Fire 'afterDeleteForSite' events
+            if ($this->hasEventHandlers(self::EVENT_AFTER_DELETE_FOR_SITE)) {
+                foreach ($multiSiteElements as $element) {
+                    $this->trigger(self::EVENT_AFTER_DELETE_FOR_SITE, new ElementEvent([
+                        'element' => $element,
+                    ]));
+                }
+            }
+        }
+
+        // Fully delete any single-site elements
+        if (!empty($singleSiteElements)) {
+            foreach ($singleSiteElements as $element) {
+                $this->deleteElement($element);
+            }
+        }
     }
 
     /**
@@ -2548,20 +2672,6 @@ class Elements extends Component
                     $filteredElements = $elements;
                 }
 
-                // filter out fields that are not part of this layout
-                // https://github.com/craftcms/cms/issues/12539
-                $filteredElements = array_values(
-                    array_filter($filteredElements, function($filteredElement) use ($plan) {
-                        $fieldLayout = $filteredElement->getFieldLayout();
-                        return $fieldLayout?->getFieldByHandle($plan->handle) !== null;
-                    })
-                );
-
-                // if we have nothing left in the $filteredElements, move on to the next iteration
-                if (empty($filteredElements)) {
-                    continue;
-                }
-
                 // Get the eager-loading map from the source element type
                 /** @var ElementInterface|string $elementType */
                 $map = $elementType::eagerLoadingMap($filteredElements, $plan->handle);
@@ -2726,7 +2836,11 @@ class Elements extends Component
 
                 // Now eager-load any sub paths
                 if (!empty($map['map']) && !empty($plan->nested)) {
-                    $this->_eagerLoadElementsInternal($map['elementType'], array_map('array_values', $targetElements), $plan->nested);
+                    $this->_eagerLoadElementsInternal(
+                        $map['elementType'],
+                        array_map('array_values', $targetElements),
+                        $plan->nested,
+                    );
                 }
             }
         }
@@ -2761,8 +2875,8 @@ class Elements extends Component
      * @param bool|null $updateSearchIndex Whether to update the element search index for the element
      * (this will happen via a background job if this is a web request)
      * @param array|null $supportedSites The element’s supported site info, indexed by site ID
-     * @param bool $forceTouch Whether to force the `dateUpdated` timestamps to be updated for the elements,
-     * regardless of whether they’re being resaved
+     * @param bool $forceTouch Whether to force the `dateUpdated` timestamp to be updated for the element,
+     * regardless of whether it’s being resaved
      * @return bool
      * @throws ElementNotFoundException if $element has an invalid $id
      * @throws UnsupportedSiteException if the element is being saved for a site it doesn’t support

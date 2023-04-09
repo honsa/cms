@@ -52,6 +52,12 @@ Craft.ElementEditor = Garnish.Base.extend(
     previewLinks: null,
     scrollY: null,
 
+    hiddenTipsStorageKey: 'Craft-' + Craft.systemUid + '.TipField.hiddenTips',
+
+    get tipDismissBtn() {
+      return this.$container.find('.tip-dismiss-btn');
+    },
+
     get slideout() {
       return this.$container.data('slideout');
     },
@@ -176,6 +182,9 @@ Craft.ElementEditor = Garnish.Base.extend(
       this.addListener(this.$statusIcon, 'click', () => {
         this.showStatusHud(this.$statusIcon);
       });
+
+      // handle closing tips
+      this.handleDismissibleTips();
 
       if (this.isFullPage && Craft.messageReceiver) {
         // Listen on Craft.broadcaster to ignore any messages sent by this very page
@@ -504,7 +513,6 @@ Craft.ElementEditor = Garnish.Base.extend(
           .replace(originalSerializedStatus, serializedStatuses)
       );
 
-      debugger;
       if (this.lastSerializedValue) {
         this.lastSerializedValue = this.lastSerializedValue.replace(
           originalSerializedStatus,
@@ -1208,6 +1216,11 @@ Craft.ElementEditor = Garnish.Base.extend(
           data: preparedData,
         })
           .then((response) => {
+            // capture the new selected tab ID, in case it just changed
+            const newSelectedTabId = this.$contentContainer
+              .children('[data-layout-tab]:not(.hidden)')
+              .data('id');
+
             this._afterSaveDraft();
 
             const createdProvisionalDraft = !this.settings.draftId;
@@ -1462,10 +1475,32 @@ Craft.ElementEditor = Garnish.Base.extend(
             this.settings.visibleLayoutElements = visibleLayoutElements;
 
             // Update the tabs
+            let tabManager;
             if (this.isFullPage) {
               Craft.cp.updateTabs(response.data.tabs);
+              tabManager = Craft.cp.tabManager;
             } else {
               this.slideout.updateTabs(response.data.tabs);
+              tabManager = this.slideout.tabManager;
+            }
+
+            // was a new tab selected after the autosave request was kicked off?
+            if (
+              selectedTabId &&
+              newSelectedTabId &&
+              selectedTabId !== newSelectedTabId
+            ) {
+              const $newSelectedTab = tabManager.$tabs.filter(
+                `[data-id="${newSelectedTabId}"]`
+              );
+              if ($newSelectedTab.length) {
+                // if the new tab is visible - switch to it
+                tabManager.selectTab($newSelectedTab);
+              } else {
+                // if the new tab is not visible (e.g. hidden by a condition)
+                // switch to the first tab
+                tabManager.selectTab(tabManager.$tabs.first());
+              }
             }
 
             Craft.appendHeadHtml(response.data.headHtml);
@@ -1485,6 +1520,9 @@ Craft.ElementEditor = Garnish.Base.extend(
                 this.lastSerializedValue = this.serializeForm(true);
               }
             }
+
+            // re-grab dismissible tips, re-attach listener, hide on re-load
+            this.handleDismissibleTips();
 
             this.afterUpdate(data);
 
@@ -1899,6 +1937,39 @@ Craft.ElementEditor = Garnish.Base.extend(
             this.submittingForm = false;
             this.slideout.hideSubmitSpinner();
           });
+      }
+    },
+
+    handleDismissibleTips: function () {
+      this.addListener(this.tipDismissBtn, 'click', (e) => {
+        this.hideTip(e);
+      });
+    },
+
+    getHiddenTipsUids: function () {
+      return Craft.getLocalStorage('dismissedTips', []);
+    },
+
+    setHiddenTipsUids: function (uids) {
+      Craft.setLocalStorage('dismissedTips', uids);
+    },
+
+    hideTip: function (ev) {
+      const targetElement = ev.target;
+      if (targetElement) {
+        const $targetParent = $(targetElement).closest('.readable');
+        if ($targetParent.length) {
+          const layoutElementUid = $targetParent.data('layout-element');
+          $targetParent.remove();
+          // add info to local storage
+          if (typeof Storage !== 'undefined') {
+            const hiddenTips = this.getHiddenTipsUids();
+            if (!hiddenTips.includes(layoutElementUid)) {
+              hiddenTips.push(layoutElementUid);
+              this.setHiddenTipsUids(hiddenTips);
+            }
+          }
+        }
       }
     },
   },

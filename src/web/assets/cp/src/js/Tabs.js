@@ -108,7 +108,7 @@ Craft.Tabs = Garnish.Base.extend({
     });
   },
 
-  selectTab: function (tab) {
+  selectTab: function (tab, focusTab = true) {
     const $tab = this._getTab(tab);
 
     if ($tab[0] === this.$selectedTab[0]) {
@@ -118,7 +118,11 @@ Craft.Tabs = Garnish.Base.extend({
     this.deselectTab();
     this.$selectedTab = $tab.addClass('sel').attr('aria-selected', 'true');
     this.makeTabFocusable($tab);
-    $tab.focus();
+
+    if (focusTab) {
+      $tab.trigger('focus');
+    }
+
     this.scrollToTab($tab);
 
     this.menu.$options.removeClass('sel');
@@ -129,6 +133,11 @@ Craft.Tabs = Garnish.Base.extend({
     });
 
     $('#content').trigger('scroll');
+
+    const $slideoutContainer = $tab.closest('.slideout-container');
+    if ($slideoutContainer.length) {
+      $slideoutContainer.find('.so-content').trigger('scroll');
+    }
   },
 
   deselectTab: function () {

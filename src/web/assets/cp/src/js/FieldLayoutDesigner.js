@@ -427,7 +427,7 @@ Craft.FieldLayoutDesigner.Tab = Garnish.Base.extend({
 
   applySettings: function () {
     if (!this.slideout.$container.find('[name$="[name]"]').val()) {
-      alert(Craft.t('app', 'You must specify a tab name.'));
+      Craft.cp.displayError(Craft.t('app', 'You must specify a tab name.'));
       return;
     }
 
@@ -450,6 +450,24 @@ Craft.FieldLayoutDesigner.Tab = Garnish.Base.extend({
         this.updateConfig((config) =>
           $.extend(response.data.config, {elements: config.elements})
         );
+        debugger;
+        const $label = this.$container.find('.tabs .tab span');
+        const $indicator = $label.children('.fld-indicator');
+        if (response.data.hasConditions) {
+          if (!$indicator.length) {
+            $label.append(
+              $('<div/>', {
+                class: 'fld-indicator',
+                title: Craft.t('app', 'This tab is conditional'),
+                'aria-label': Craft.t('app', 'This tab is conditional'),
+                'data-icon': 'condition',
+                role: 'img',
+              })
+            );
+          }
+        } else if ($indicator.length) {
+          $indicator.remove();
+        }
         this.slideout.close();
       })
       .catch((e) => {
@@ -722,11 +740,6 @@ Craft.FieldLayoutDesigner.Element = Garnish.Base.extend({
         this.config = response.data.config;
         this.$editBtn.detach();
         this.$container.html($(response.data.selectorHtml).html());
-        if (response.data.hasConditions) {
-          this.$container.addClass('has-conditions');
-        } else {
-          this.$container.removeClass('has-conditions');
-        }
         this.initUi();
       })
       .catch((e) => {
@@ -1089,7 +1102,7 @@ Craft.FieldLayoutDesigner.TabDrag = Craft.FieldLayoutDesigner.BaseDrag.extend({
 
     return $(`
 <div class="fld-tab fld-insertion" style="height: ${this.$draggee.height()}px;">
-  <div class="tabs"><div class="tab sel draggable" style="width: ${$tab.width()}px; height: ${$tab.height()}px;"></div></div>
+  <div class="tabs"><div class="tab sel draggable" style="width: ${$tab.outerWidth()}px; height: ${$tab.outerHeight()}px;"></div></div>
   <div class="fld-tabcontent" style="height: ${this.$draggee
     .find('.fld-tabcontent')
     .height()}px;"></div>
