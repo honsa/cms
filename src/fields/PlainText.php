@@ -42,7 +42,8 @@ class PlainText extends Field implements PreviewableFieldInterface, SortableFiel
     }
 
     /**
-     * @var 'normal'|'enlarged' The UI mode of the field.
+     * @var string The UI mode of the field.
+     * @phpstan-var 'normal'|'enlarged'
      * @since 3.5.0
      */
     public string $uiMode = 'normal';
@@ -241,14 +242,6 @@ class PlainText extends Field implements PreviewableFieldInterface, SortableFiel
             $value = StringHelper::emojiToShortcodes($value);
         }
         return $value;
-    }
-
-    /**
-     * @inheritdoc
-     */
-    protected function searchKeywords(mixed $value, ElementInterface $element): string
-    {
-        return StringHelper::emojiToShortcodes((string)$value);
     }
 
     /**

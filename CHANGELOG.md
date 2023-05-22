@@ -2,7 +2,36 @@
 
 ## Unreleased
 
+- Improved `craft\helpers\FileHelper::getExtensionByMimeType()` for some ambiguous, web-friendly MIME types.
+- Fixed a bug where reverting an entry’s content from a revision could omit some Matrix blocks.
+- Fixed an error that could occur when adding a new site to an entry which contained Matrix blocks, if the same site had been added and removed previously.
+- Fixed a bug where Matrix blocks nested within Neo or Super Table fields could be omitted when propagating an entry to a new site. ([#13207](https://github.com/craftcms/cms/issues/13207))
+- Fixed two XSS vulnerabilities.
+
+## 4.4.11 - 2023-05-15
+
+- Fixed a bug where Matrix blocks weren’t getting propagated to newly-added sites for entries. ([#13181](https://github.com/craftcms/cms/issues/13181))
+- Fixed a SQL error that could occur when updating to Craft 4.4 on PostgreSQL. ([#13186](https://github.com/craftcms/cms/issues/13186))
+- Fixed a bug where `craft\helpers\StringHelper::isUtf8()` was unreliable.
+- Fixed a styling issue with Date fields. ([#13182](https://github.com/craftcms/cms/issues/13182))
+
+## 4.4.10.1 - 2023-05-10
+
+- Fixed a bug where it wasn’t possible to add new Matrix blocks via the “Add a block” menu. ([#13177](https://github.com/craftcms/cms/issues/13177))
+
+## 4.4.10 - 2023-05-09
+
+- PHP warnings and notices no longer halt execution when Dev Mode is disabled. ([#13164](https://github.com/craftcms/cms/issues/13164))
 - Fixed a “Double-instantiating a menu button on an element” console warning that occurred on pages with Matrix fields. ([#6338](https://github.com/craftcms/cms/issues/6338))
+- Fixed a bug where Quick Post widget settings weren’t filtering custom field options for the selected entry type.
+- Fixed a bug where Matrix blocks could get detached from entries when sections were enabled for a new site. ([#13155](https://github.com/craftcms/cms/issues/13155))
+- Fixed an error that could occur when entrifying a global set without a field layout. ([#13156](https://github.com/craftcms/cms/issues/13156))
+- Fixed a bug where Single entries’ edit pages could have “Save and add another” actions. ([#13157](https://github.com/craftcms/cms/issues/13157))
+- Fixed styling issues with Date fields. ([#13167](https://github.com/craftcms/cms/issues/13167))
+- Fixed the vertical alignment of element labels. ([#13168](https://github.com/craftcms/cms/issues/13168))
+- Fixed a bug where the System Report utility could display MariaDB’s MySQL-equivalent version, if it was listed first in the server version string.
+- Added `craft\helpers\ArrayHelper::containsRecursive()`.
+- `craft\helpers\App::normalizeVersion()` now returns the highest version found before distribution info.
 
 ## 4.4.9 - 2023-05-02
 
