@@ -17,8 +17,12 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
 
   afterInit: function () {
     // Find which of the visible sections the user has permission to create new entries in
-    this.publishableSections = Craft.publishableSections.filter(
-      (s) => !!this.getSourceByKey(`section:${s.uid}`)
+    const includedSections = this.$sources
+      .toArray()
+      .map((source) => $(source).data('handle'))
+      .filter((handle) => !!handle);
+    this.publishableSections = Craft.publishableSections.filter((section) =>
+      includedSections.includes(section.handle)
     );
 
     this.base();
@@ -50,13 +54,14 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
       return;
     }
 
-    let handle;
+    let sectionHandle, entryTypeHandle;
 
     // Get the handle of the selected source
     if (this.$source.data('key') === 'singles') {
-      handle = 'singles';
+      sectionHandle = 'singles';
     } else {
-      handle = this.$source.data('handle');
+      sectionHandle = this.$source.data('handle');
+      entryTypeHandle = this.$source.data('entry-type');
     }
 
     // Update the New Entry button
@@ -70,7 +75,7 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
 
       // Determine if they are viewing a section that they have permission to create entries in
       const selectedSection = this.publishableSections.find(
-        (s) => s.handle === handle
+        (s) => s.handle === sectionHandle
       );
 
       this.$newEntryBtnGroup = $('<div class="btngroup submit" data-wrapper/>');
@@ -82,7 +87,9 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
       if (selectedSection) {
         const visibleLabel =
           this.settings.context === 'index'
-            ? Craft.t('app', 'New entry')
+            ? Craft.t('app', 'New {type}', {
+                type: Craft.t('app', 'entry'),
+              })
             : Craft.t('app', 'New {section} entry', {
                 section: selectedSection.name,
               });
@@ -115,9 +122,15 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
             ((ev.type === 'click' && Garnish.isCtrlKeyPressed(ev)) ||
               (ev.type === 'mousedown' && ev.originalEvent.button === 1))
           ) {
-            window.open(Craft.getUrl(`entries/${selectedSection.handle}/new`));
+            const params = {};
+            if (entryTypeHandle) {
+              params.type = entryTypeHandle;
+            }
+            window.open(
+              Craft.getUrl(`entries/${selectedSection.handle}/new`, params)
+            );
           } else if (ev.type === 'click') {
-            this._createEntry(selectedSection.id);
+            this._createEntry(selectedSection.id, entryTypeHandle);
           }
         });
 
@@ -133,7 +146,9 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
       } else {
         this.$newEntryBtn = $menuBtn = Craft.ui
           .createButton({
-            label: Craft.t('app', 'New entry'),
+            label: Craft.t('app', 'New {type}', {
+              type: Craft.t('app', 'entry'),
+            }),
             ariaLabel: Craft.t('app', 'New entry, choose a section'),
             spinner: true,
           })
@@ -163,13 +178,13 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
             const $li = $('<li/>').appendTo($ul);
             const $a = $('<a/>', {
               role: anchorRole === 'button' ? 'button' : null,
-              href: '#', // Allows for click listener and tab order
+              href: Craft.getUrl(`entries/${section.handle}/new`),
               type: anchorRole === 'button' ? 'button' : null,
               text: Craft.t('app', 'New {section} entry', {
                 section: section.name,
               }),
             }).appendTo($li);
-            this.addListener($a, 'click', () => {
+            this.addListener($a, 'activate', () => {
               $menuBtn.data('trigger').hide();
               this._createEntry(section.id);
             });
@@ -196,15 +211,15 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
     if (this.settings.context === 'index') {
       let uri = 'entries';
 
-      if (handle) {
-        uri += '/' + handle;
+      if (sectionHandle) {
+        uri += '/' + sectionHandle;
       }
 
       Craft.setPath(uri);
     }
   },
 
-  _createEntry: function (sectionId) {
+  _createEntry: function (sectionId, entryTypeHandle) {
     if (this.$newEntryBtn.hasClass('loading')) {
       console.warn('New entry creation already in progress.');
       return;
@@ -223,6 +238,7 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
       data: {
         siteId: this.siteId,
         section: section.handle,
+        type: entryTypeHandle,
       },
     })
       .then(({data}) => {
@@ -238,13 +254,6 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
             },
           });
           slideout.on('submit', () => {
-            // Make sure the right section is selected
-            const sectionSourceKey = `section:${section.uid}`;
-
-            if (this.sourceKey !== sectionSourceKey) {
-              this.selectSourceByKey(sectionSourceKey);
-            }
-
             this.clearSearch();
             this.setSelectedSortAttribute('dateCreated', 'desc');
             this.selectElementAfterUpdate(data.entry.id);

@@ -9,7 +9,6 @@ namespace craft\helpers;
 
 use Craft;
 use craft\base\ElementInterface;
-use craft\base\ExpirableElementInterface;
 use craft\db\Paginator;
 use craft\web\twig\variables\Paginate;
 use craft\web\View;
@@ -100,31 +99,27 @@ class Template
      * @param string $type The type of attribute (@see [[TwigTemplate]] constants)
      * @param bool $isDefinedTest Whether this is only a defined check
      * @param bool $ignoreStrictCheck Whether to ignore the strict attribute check or not
+     * @param bool $sandboxed Whether sandboxing is enabled
+     * @param int $lineno The template line where the attribute was called
      * @return mixed The attribute value, or a Boolean when $isDefinedTest is true, or null when the attribute is not set and $ignoreStrictCheck is true
      * @throws RuntimeError if the attribute does not exist and Twig is running in strict mode and $isDefinedTest is false
      * @internal
      */
-    public static function attribute(Environment $env, Source $source, mixed $object, mixed $item, array $arguments = [], string $type = TwigTemplate::ANY_CALL, bool $isDefinedTest = false, bool $ignoreStrictCheck = false): mixed
-    {
+    public static function attribute(
+        Environment $env,
+        Source $source,
+        mixed $object,
+        mixed $item,
+        array $arguments = [],
+        string $type = TwigTemplate::ANY_CALL,
+        bool $isDefinedTest = false,
+        bool $ignoreStrictCheck = false,
+        bool $sandboxed = false,
+        int $lineno = -1,
+    ): mixed {
         // Include this element in any active caches
         if ($object instanceof ElementInterface) {
-            $elementsService = Craft::$app->getElements();
-            if ($elementsService->getIsCollectingCacheInfo()) {
-                $class = get_class($object);
-                $elementsService->collectCacheTags([
-                    'element',
-                    "element::$class",
-                    "element::$class::$object->id",
-                ]);
-
-                // If the element is expirable, register its expiry date
-                if (
-                    $object instanceof ExpirableElementInterface &&
-                    ($expiryDate = $object->getExpiryDate()) !== null
-                ) {
-                    $elementsService->setCacheExpiryDate($expiryDate);
-                }
-            }
+            Craft::$app->getElements()->collectCacheInfoForElement($object);
         }
 
         if (
@@ -143,7 +138,18 @@ class Template
         }
 
         try {
-            return twig_get_attribute($env, $source, $object, $item, $arguments, $type, $isDefinedTest, $ignoreStrictCheck);
+            return twig_get_attribute(
+                $env,
+                $source,
+                $object,
+                $item,
+                $arguments,
+                $type,
+                $isDefinedTest,
+                $ignoreStrictCheck,
+                $sandboxed,
+                $lineno,
+            );
         } catch (UnknownMethodException $e) {
             // Copy twig_get_attribute()'s BadMethodCallException handling
             if ($ignoreStrictCheck || !$env->isStrictVariables()) {
@@ -287,7 +293,7 @@ class Template
     public static function css(string $css, array $options = [], ?string $key = null): void
     {
         // Is this a CSS file?
-        if (preg_match('/^[^\r\n]+\.css$/i', $css) || UrlHelper::isAbsoluteUrl($css)) {
+        if (preg_match('/^[^\r\n]+\.css(\.gz)?$/i', $css) || UrlHelper::isAbsoluteUrl($css)) {
             Craft::$app->getView()->registerCssFile($css, $options, $key);
         } else {
             Craft::$app->getView()->registerCss($css, $options, $key);
@@ -308,7 +314,7 @@ class Template
     public static function js(string $js, array $options = [], ?string $key = null): void
     {
         // Is this a JS file?
-        if (preg_match('/^[^\r\n]+\.js$/i', $js) || UrlHelper::isAbsoluteUrl($js)) {
+        if (preg_match('/^[^\r\n]+\.js(\.gz)?$/i', $js) || UrlHelper::isAbsoluteUrl($js)) {
             Craft::$app->getView()->registerJsFile($js, $options, $key);
         } else {
             $position = $options['position'] ?? View::POS_READY;

@@ -183,6 +183,22 @@ class Html extends \yii\helpers\Html
 
     /**
      * @inheritdoc
+     */
+    public static function tag($name, $content = '', $options = [])
+    {
+        return parent::tag($name, $content, static::normalizeTagAttributes($options));
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public static function beginTag($name, $options = [])
+    {
+        return parent::beginTag($name, static::normalizeTagAttributes($options));
+    }
+
+    /**
+     * @inheritdoc
      * @since 3.3.0
      */
     public static function a($text, $url = null, $options = []): string
@@ -401,7 +417,7 @@ class Html extends \yii\helpers\Html
             // Wrapped in quotes?
             if (isset($html[$offset]) && in_array($html[$offset], ['\'', '"'])) {
                 $q = preg_quote($html[$offset], '/');
-                if (!preg_match("/$q(.*?)$q/A", $html, $m, 0, $offset)) {
+                if (!preg_match("/$q(.*?)$q/sA", $html, $m, 0, $offset)) {
                     // No matching end quote
                     throw new InvalidArgumentException("Malformed HTML tag attribute in string: $html");
                 }
@@ -441,6 +457,7 @@ class Html extends \yii\helpers\Html
 
             switch ($name) {
                 case 'class':
+                case 'removeClass':
                     $normalized[$name] = static::explodeClass($value);
                     break;
                 case 'style':
@@ -457,6 +474,11 @@ class Html extends \yii\helpers\Html
                     }
                     $normalized[$name] = $value;
             }
+        }
+
+        if (isset($normalized['removeClass'])) {
+            $removeClasses = ArrayHelper::remove($normalized, 'removeClass');
+            $normalized['class'] = array_diff($normalized['class'] ?? [], $removeClasses);
         }
 
         return $normalized;
@@ -589,8 +611,8 @@ class Html extends \yii\helpers\Html
      * @param string $content
      * @return array[] An array containing the HTML content, and the condition (if there is one).
      * @phpstan-return array{string,string|null}
-     * @since 4.0.0
      * @see wrapIntoCondition()
+     * @since 4.0.0
      */
     public static function unwrapCondition(string $content): array
     {
@@ -633,7 +655,15 @@ class Html extends \yii\helpers\Html
      */
     public static function id(string $id = ''): string
     {
-        $id = trim(preg_replace('/[^\w]+/', '-', $id), '-');
+        // Ignore if it looks like a placeholder
+        // or starts with a placeholder (e.g. widgets > __NAMESPACE__-fieldId)
+        if (preg_match('/^__[A-Z_]+__(-)?/', $id)) {
+            return $id;
+        }
+
+        // IDs must begin with a letter
+        $id = preg_replace('/^[^A-Za-z]+/', '', $id);
+        $id = rtrim(preg_replace('/[^A-Za-z0-9_.]+/', '-', $id), '-');
         return $id ?: StringHelper::randomString(10);
     }
 
@@ -712,9 +742,9 @@ class Html extends \yii\helpers\Html
      * @param string $html The HTML code
      * @param string $namespace The namespace
      * @return string The HTML with namespaced input names
-     * @since 3.5.0
      * @see namespaceHtml()
      * @see namespaceAttributes()
+     * @since 3.5.0
      */
     public static function namespaceInputs(string $html, string $namespace): string
     {
@@ -756,9 +786,9 @@ class Html extends \yii\helpers\Html
      * @param string $namespace The namespace
      * @param bool $withClasses Whether class names should be namespaced as well (affects both `class` attributes and class name CSS selectors)
      * @return string The HTML with namespaced attributes
-     * @since 3.5.0
      * @see namespaceHtml()
      * @see namespaceInputs()
+     * @since 3.5.0
      */
     public static function namespaceAttributes(string $html, string $namespace, bool $withClasses = false): string
     {
@@ -787,19 +817,34 @@ class Html extends \yii\helpers\Html
 
         // normal HTML attributes
         $html = preg_replace_callback(
-            "/(?<=\\s)((for|list|xlink:href|href|aria\\-labelledby|aria\\-describedby|aria\\-controls|data\\-target|data\\-reverse\\-target|data\\-target\\-prefix)=('|\")#?)([^\.'\"]*)\\3/i",
+            "/(?<=\\s)((for|list|xlink:href|href|aria\\-labelledby|aria\\-describedby|aria\\-controls|data\\-target|data\\-reverse\\-target|data\\-target\\-prefix)=('|\"))([^'\"]+)\\3/i",
             function(array $match) use ($namespace, $ids): string {
-                $namespacedIds = array_map(function(string $id) use ($match, $ids, $namespace): string {
+                $matchIds = preg_split('/([,\s+]+)/', $match[4], flags: PREG_SPLIT_DELIM_CAPTURE);
+                $namespacedIds = '';
+                foreach ($matchIds as $i => $id) {
                     if (
-                        isset($ids[$id]) ||
-                        $match[2] === 'data-target-prefix' ||
-                        ($match[2] === 'href' && str_ends_with($match[1], '#'))
+                        $i % 2 === 0 && // not a delimiter
+                        $id[0] !== '.' // not a class name
                     ) {
-                        return sprintf('%s-%s', $namespace, $id);
+                        $isHash = $id[0] === '#';
+                        if ($isHash) {
+                            $id = substr($id, 1);
+                        }
+                        if (
+                            isset($ids[$id]) ||
+                            $match[2] === 'data-target-prefix' ||
+                            ($isHash && $match[2] === 'href')
+                        ) {
+                            $id = sprintf('%s-%s', $namespace, $id);
+                        }
+                        if ($isHash) {
+                            $id = "#$id";
+                        }
                     }
-                    return $id;
-                }, explode(' ', $match[4]));
-                return $match[1] . implode(' ', $namespacedIds) . $match[3];
+
+                    $namespacedIds .= $id;
+                }
+                return sprintf('%s%s%s', $match[1], $namespacedIds, $match[3]);
             }, $html);
 
         // ID references in url() calls
@@ -836,7 +881,7 @@ class Html extends \yii\helpers\Html
                         return $match[0];
                     }, $match[2]);
                 if ($withClasses) {
-                    $html = preg_replace("/(?<![\\w'\"])\\.([\\w\\-]+)(?=[,\\s\\{])/", ".$namespace-$1", $match[2]);
+                    $html = preg_replace("/(?<![\\w'\"])\\.([\\w\\-]+)(?=[,:\\s{])/", ".$namespace-$1", $match[2]);
                 }
                 return $match[1] . $html . $match[3];
             }, $html);
@@ -852,16 +897,34 @@ class Html extends \yii\helpers\Html
     {
         $markers = [];
         $offset = 0;
+        $r = '';
 
-        while (preg_match('/<textarea\b[^>]*>/i', $html, $openMatch, PREG_OFFSET_CAPTURE, $offset)) {
-            $innerOffset = $openMatch[0][1] + strlen($openMatch[0][0]);
-            if (!preg_match('/<\/textarea>/', $html, $closeMatch, PREG_OFFSET_CAPTURE, $innerOffset)) {
+        while (($pos = stripos($html, '<textarea', $offset)) !== false) {
+            $gtPos = strpos($html, '>', $pos + 9);
+            if ($gtPos === false) {
                 break;
             }
-            $marker = sprintf('{marker:%s}', StringHelper::randomString());
-            $markers[$marker] = substr($html, $innerOffset, $closeMatch[0][1] - $innerOffset);
-            $html = substr($html, 0, $innerOffset) . $marker . substr($html, $closeMatch[0][1]);
-            $offset = $innerOffset + strlen($marker) + strlen($closeMatch[0][0]);
+            $innerHtmlPos = $gtPos + 1;
+            $closePos = stripos($html, '</textarea>', $innerHtmlPos);
+            if ($closePos === false) {
+                break;
+            }
+            $outerPos = $closePos + 11;
+            $innerHtml = $closePos !== $innerHtmlPos ? substr($html, $innerHtmlPos, $closePos - $innerHtmlPos) : null;
+
+            if ($innerHtml !== null && str_contains($innerHtml, '<')) {
+                $marker = sprintf('{marker:%s}', mt_rand());
+                $r .= substr($html, $offset, $innerHtmlPos - $offset) . $marker . substr($html, $closePos, 11);
+                $markers[$marker] = $innerHtml;
+            } else {
+                $r .= substr($html, $offset, $outerPos - $offset);
+            }
+
+            $offset = $outerPos;
+        }
+
+        if ($offset !== 0) {
+            $html = $r . substr($html, $offset);
         }
 
         return $markers;
@@ -876,7 +939,22 @@ class Html extends \yii\helpers\Html
      */
     private static function _restoreTextareas(string $html, array $markers): string
     {
-        return str_replace(array_keys($markers), array_values($markers), $html);
+        if (empty($markers)) {
+            return $html;
+        }
+
+        $r = '';
+        $offset = 0;
+
+        foreach ($markers as $marker => $textarea) {
+            $pos = strpos($html, $marker, $offset);
+            if ($pos !== false) {
+                $r .= substr($html, $offset, $pos - $offset) . $textarea;
+                $offset = $pos + strlen($marker);
+            }
+        }
+
+        return $r . substr($html, $offset);
     }
 
     /**
@@ -1009,7 +1087,7 @@ class Html extends \yii\helpers\Html
             $offset = $tag['end'];
         }
     }
-    
+
     /**
      * Returns the contents of a given SVG file.
      *
@@ -1020,15 +1098,23 @@ class Html extends \yii\helpers\Html
      * @param bool|null $namespace Whether class names and IDs within the SVG
      * should be namespaced to avoid conflicts with other elements in the DOM.
      * By default, the SVG will only be namespaced if an asset or markup is passed in.
+     * @param bool $throwException Whether to throw an exception on error
      * @return string
      * @since 4.3.0
      */
-    public static function svg(Asset|string $svg, ?bool $sanitize = null, ?bool $namespace = null): string
-    {
+    public static function svg(
+        Asset|string $svg,
+        ?bool $sanitize = null,
+        ?bool $namespace = null,
+        bool $throwException = false,
+    ): string {
         if ($svg instanceof Asset) {
             try {
                 $svg = $svg->getContents();
             } catch (Throwable $e) {
+                if ($throwException) {
+                    throw $e;
+                }
                 Craft::error("Could not get the contents of {$svg->getPath()}: {$e->getMessage()}", __METHOD__);
                 Craft::$app->getErrorHandler()->logException($e);
                 return '';
@@ -1038,11 +1124,17 @@ class Html extends \yii\helpers\Html
             try {
                 $svg = Craft::getAlias($svg);
             } catch (InvalidArgumentException $e) {
+                if ($throwException) {
+                    throw $e;
+                }
                 Craft::error("Could not get the contents of $svg: {$e->getMessage()}", __METHOD__);
                 Craft::$app->getErrorHandler()->logException($e);
                 return '';
             }
             if (!is_file($svg) || !FileHelper::isSvg($svg)) {
+                if ($throwException) {
+                    throw new InvalidArgumentException("Invalid SVG path: $svg");
+                }
                 Craft::warning("Could not get the contents of $svg: The file doesn't exist", __METHOD__);
                 return '';
             }

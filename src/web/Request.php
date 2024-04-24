@@ -30,7 +30,6 @@ use yii\web\NotFoundHttpException;
 /**
  * @inheritdoc
  * @property string $fullPath The full requested path, including the control panel trigger and pagination info.
- * @property string $path The requested path, sans control panel trigger and pagination info.
  * @property array $segments The segments of the requested path.
  * @property int $pageNum The requested page number.
  * @property string $token The token submitted with the request, if there is one.
@@ -697,7 +696,11 @@ class Request extends \yii\web\Request
      */
     public function getIsPreview(): bool
     {
-        return $this->getQueryParam('x-craft-preview') !== null || $this->getQueryParam('x-craft-live-preview') !== null;
+        return (
+            ($this->getQueryParam('x-craft-preview') ?? $this->getQueryParam('x-craft-live-preview')) !== null &&
+            // If there's a token but it expired, they're looking at the live site
+            (!$this->getHadToken() || $this->getToken() !== null)
+        );
     }
 
     /**
@@ -834,7 +837,7 @@ class Request extends \yii\web\Request
             // Was a namespace passed?
             $namespace = $this->getHeaders()->get('X-Craft-Namespace');
             if ($namespace) {
-                $params = $params[$namespace] ?? [];
+                $params = ArrayHelper::getValue($params, $namespace, []);
             }
 
             $this->setBodyParams($this->_utf8AllTheThings($params));
@@ -842,6 +845,15 @@ class Request extends \yii\web\Request
         }
 
         return parent::getBodyParams();
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function setBodyParams($values)
+    {
+        parent::setBodyParams($values);
+        $this->_setBodyParams = false;
     }
 
     /**
@@ -966,6 +978,23 @@ class Request extends \yii\web\Request
         }
 
         return parent::getQueryParams();
+    }
+
+    /**
+     * Returns the named GET parameters, without the path parameter.
+     *
+     * @return array
+     * @since 5.0.0
+     */
+    public function getQueryParamsWithoutPath(): array
+    {
+        $params = $this->getQueryParams();
+
+        if ($this->generalConfig->pathParam) {
+            unset($params[$this->generalConfig->pathParam]);
+        }
+
+        return $params;
     }
 
     /**
@@ -1286,7 +1315,21 @@ class Request extends \yii\web\Request
      */
     public function accepts(string $contentType): bool
     {
-        return array_key_exists($contentType, $this->getAcceptableContentTypes());
+        $acceptableContentTypes = $this->getAcceptableContentTypes();
+
+        // then check if the actual key exists
+        if (array_key_exists($contentType, $acceptableContentTypes)) {
+            return true;
+        }
+
+        // check for cases where acceptable content type contains mimeType/*
+        foreach (array_keys($acceptableContentTypes) as $mime) {
+            if (str_ends_with($mime, '/*') && str_starts_with($contentType, substr($mime, 0, -1))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -1476,7 +1519,7 @@ class Request extends \yii\web\Request
 
         // Sort by scores descending
         arsort($scores, SORT_NUMERIC);
-        $first = ArrayHelper::firstKey($scores);
+        $first = array_key_first($scores);
         $siteScore = reset($scores);
         return $sites[$first];
     }

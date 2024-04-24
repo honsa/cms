@@ -15,6 +15,7 @@ use craft\elements\Asset;
 use craft\elements\Category;
 use craft\elements\Entry;
 use craft\elements\User;
+use craft\enums\CmsEdition;
 use craft\errors\WrongEditionException;
 use craft\events\ConfigEvent;
 use craft\events\RegisterUserPermissionsEvent;
@@ -201,7 +202,7 @@ class UserPermissions extends Component
      */
     public function saveGroupPermissions(int $groupId, array $permissions): bool
     {
-        Craft::$app->requireEdition(Craft::Pro);
+        Craft::$app->requireEdition(CmsEdition::Pro);
 
         // Lowercase the permissions
         $permissions = array_map('strtolower', $permissions);
@@ -277,7 +278,7 @@ class UserPermissions extends Component
      */
     public function saveUserPermissions(int $userId, array $permissions): bool
     {
-        Craft::$app->requireEdition(Craft::Pro);
+        Craft::$app->requireEdition(CmsEdition::Pro);
 
         // Delete any existing user permissions
         Db::delete(Table::USERPERMISSIONS_USERS, [
@@ -376,6 +377,7 @@ class UserPermissions extends Component
                 ],
                 'accessCp' => [
                     'label' => Craft::t('app', 'Access the control panel'),
+                    'warning' => Craft::t('app', 'Includes read-only access to user data and most content, via element selector modals and other means.'),
                     'nested' => array_merge([
                         'accessCpWhenSystemIsOff' => [
                             'label' => Craft::t('app', 'Access the control panel when the system is offline'),
@@ -391,7 +393,7 @@ class UserPermissions extends Component
 
     private function _userPermissions(array &$permissions): void
     {
-        if (Craft::$app->getEdition() !== Craft::Pro) {
+        if (Craft::$app->edition !== CmsEdition::Pro) {
             return;
         }
 
@@ -467,7 +469,7 @@ class UserPermissions extends Component
 
     private function _entryPermissions(array &$permissions): void
     {
-        $sections = Craft::$app->getSections()->getAllSections();
+        $sections = Craft::$app->getEntries()->getAllSections();
 
         if (!$sections) {
             return;
@@ -509,12 +511,19 @@ class UserPermissions extends Component
                 $sectionPermissions = [
                     "viewEntries:$section->uid" => [
                         'label' => Craft::t('app', 'View {type}', ['type' => $pluralType]),
+                        'info' => Craft::t('app', 'Allows viewing existing {type} and creating drafts for them.', [
+                            'type' => $pluralType,
+                        ]),
                         'nested' => [
                             "createEntries:$section->uid" => [
                                 'label' => Craft::t('app', 'Create {type}', ['type' => $pluralType]),
+                                'info' => Craft::t('app', 'Allows creating drafts of new {type}.', ['type' => $pluralType]),
                             ],
                             "saveEntries:$section->uid" => [
                                 'label' => Craft::t('app', 'Save {type}', ['type' => $pluralType]),
+                                'info' => Craft::t('app', 'Allows fully saving canonical {type} (directly or by applying drafts).', [
+                                    'type' => $pluralType,
+                                ]),
                             ],
                             "deleteEntries:$section->uid" => [
                                 'label' => Craft::t('app', 'Delete {type}', ['type' => $pluralType]),

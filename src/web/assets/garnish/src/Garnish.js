@@ -155,9 +155,10 @@ Garnish = $.extend(Garnish, {
    *
    * @param {object} val
    * @return {boolean}
+   * @deprecated
    */
   isArray: function (val) {
-    return val instanceof Array;
+    return Array.isArray(val);
   },
 
   /**
@@ -309,14 +310,17 @@ Garnish = $.extend(Garnish, {
   hideModalBackgroundLayers: function () {
     const topmostLayer = Garnish.uiLayerManager.currentLayer.$container.get(0);
 
-    Garnish.$bod.children().each(function () {
-      // If element is modal or already has jsAria class, do nothing
-      if (Garnish.hasJsAriaClass(this) || this === topmostLayer) return;
+    Garnish.$bod
+      .children()
+      .not('#notifications')
+      .each(function () {
+        // If element is modal or already has jsAria class, do nothing
+        if (Garnish.hasJsAriaClass(this) || this === topmostLayer) return;
 
-      if (!Garnish.isScriptOrStyleElement(this)) {
-        Garnish.ariaHide(this);
-      }
-    });
+        if (!Garnish.isScriptOrStyleElement(this)) {
+          Garnish.ariaHide(this);
+        }
+      });
   },
 
   /**
@@ -504,6 +508,7 @@ Garnish = $.extend(Garnish, {
    * Handles keyboard activation of non-semantic buttons
    * @param {Object} event The keypress event
    * @param {Object} callback The callback to perform if SPACE or ENTER keys are pressed on the non-semantic button
+   * @deprecated The `activate` event should be used instead
    */
   handleActivatingKeypress: function (event, callback) {
     const key = event.keyCode;
@@ -718,7 +723,7 @@ Garnish = $.extend(Garnish, {
 
     // Flatten any array values whose input name doesn't end in "[]"
     //  - e.g. a multi-select
-    else if (Garnish.isArray(val) && $input.attr('name').slice(-2) !== '[]') {
+    else if (Array.isArray(val) && $input.attr('name').slice(-2) !== '[]') {
       if (val.length) {
         return val[val.length - 1];
       } else {
@@ -784,7 +789,7 @@ Garnish = $.extend(Garnish, {
         }
       }
 
-      if (!Garnish.isArray(inputVal)) {
+      if (!Array.isArray(inputVal)) {
         inputVal = [inputVal];
       }
 
@@ -810,8 +815,21 @@ Garnish = $.extend(Garnish, {
         break;
       }
 
-      $targetInputs.eq(i).val($sourceInputs.eq(i).val());
+      const $targetInput = $targetInputs.eq(i);
+      if ($targetInput.attr('type') !== 'file') {
+        $targetInputs.eq(i).val($sourceInputs.eq(i).val());
+      }
     }
+  },
+
+  /**
+   * Returns whether a mouse event is for the primary mouse button.
+   *
+   * @param ev The mouse event
+   * @return {boolean}
+   */
+  isPrimaryClick: function (ev) {
+    return ev.which === this.PRIMARY_CLICK && !ev.ctrlKey && !ev.metaKey;
   },
 
   /**
@@ -951,7 +969,12 @@ $.extend($.event.special, {
       $elem.on({
         'mousedown.garnish-activate': function (e) {
           // Prevent buttons from getting focus on click
-          e.preventDefault();
+          if (
+            e.currentTarget.nodeName === 'BUTTON' ||
+            e.currentTarget.role === 'button'
+          ) {
+            e.preventDefault();
+          }
         },
         'click.garnish-activate': function (e) {
           const disabled = $elem.hasClass('disabled');
@@ -967,7 +990,12 @@ $.extend($.event.special, {
             return;
           }
 
-          e.preventDefault();
+          if (
+            e.currentTarget.nodeName === 'BUTTON' ||
+            e.currentTarget.role === 'button'
+          ) {
+            e.preventDefault();
+          }
 
           if (!disabled) {
             $elem.trigger('activate');
@@ -976,13 +1004,21 @@ $.extend($.event.special, {
         'keydown.garnish-activate': function (e) {
           // Ignore if the event was bubbled up, or if it wasn't the Space/Return key
           if (
-            this === $elem[0] &&
-            [Garnish.SPACE_KEY, Garnish.RETURN_KEY].includes(e.keyCode)
+            this !== $elem[0] ||
+            ![Garnish.SPACE_KEY, Garnish.RETURN_KEY].includes(e.keyCode)
+          ) {
+            return;
+          }
+
+          if (
+            e.currentTarget.nodeName === 'BUTTON' ||
+            e.currentTarget.role === 'button'
           ) {
             e.preventDefault();
-            if (!$elem.hasClass('disabled')) {
-              $elem.trigger('activate');
-            }
+          }
+
+          if (!$elem.hasClass('disabled')) {
+            $elem.trigger('activate');
           }
         },
       });
@@ -1019,12 +1055,7 @@ $.extend($.event.special, {
     handle: function (ev, data) {
       var el = this;
       var args = arguments;
-      var delay =
-        data && typeof data.delay !== 'undefined'
-          ? data.delay
-          : ev.data && ev.data.delay !== undefined
-          ? ev.data.delay
-          : null;
+      var delay = data?.delay ?? ev?.data?.delay ?? null;
       var handleObj = ev.handleObj;
       var targetData = $.data(ev.target);
 

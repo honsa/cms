@@ -10,6 +10,7 @@ namespace craft\utilities;
 use Craft;
 use craft\base\Utility;
 use craft\events\ListVolumesEvent;
+use craft\helpers\App;
 use craft\helpers\Html;
 use craft\i18n\Locale;
 use craft\models\Volume;
@@ -49,9 +50,9 @@ class AssetIndexes extends Utility
     /**
      * @inheritdoc
      */
-    public static function iconPath(): ?string
+    public static function icon(): ?string
     {
-        return Craft::getAlias('@appicons/photo.svg');
+        return 'image';
     }
 
     /**
@@ -102,6 +103,7 @@ class AssetIndexes extends Utility
             'existingSessions' => $existingIndexingSessions,
             'checkboxSelectHtml' => $checkboxSelectHtml,
             'dateFormat' => $dateFormat,
+            'isEphemeral' => App::isEphemeral(),
         ]);
     }
 }

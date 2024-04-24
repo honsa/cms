@@ -9,6 +9,7 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
     elementSort: null,
     modal: null,
     elementEditor: null,
+    modalFirstOpen: true,
 
     $container: null,
     $form: null,
@@ -84,13 +85,24 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
       this.initElementSort();
       this.resetElements();
 
-      if (this.$addElementBtn) {
+      if (this.$addElementBtn.length) {
         this.addListener(this.$addElementBtn, 'activate', 'showModal');
       }
 
       Garnish.requestAnimationFrame(() => {
         this._initialized = true;
       });
+
+      if (this.elementSelect) {
+        this.addListener(Garnish.$win, 'mousedown', (ev) => {
+          if (
+            !this.$container.is(ev.target) &&
+            !this.$container.find(ev.target).length
+          ) {
+            this.elementSelect.deselectAll();
+          }
+        });
+      }
     },
 
     get totalSelected() {
@@ -106,7 +118,11 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
     },
 
     getElements: function () {
-      return this.$elementsContainer.find('.element');
+      if (this.$elementsContainer.hasClass('structure')) {
+        return this.$elementsContainer.find('> li .row .element');
+      } else {
+        return this.$elementsContainer.find('> li > .element');
+      }
     },
 
     getAddElementsBtn: function () {
@@ -119,11 +135,19 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
 
     initElementSelect: function () {
       if (this.settings.selectable) {
-        this.elementSelect = new Garnish.Select({
-          multi: this.settings.sortable,
-          filter: ':not(.delete)',
-        });
+        this.elementSelect = new Garnish.Select(this.elementSelectSettings());
       }
+    },
+
+    elementSelectSettings() {
+      return {
+        multi: this.settings.sortable,
+        filter: (target) => {
+          return !$(target).closest('a[href],button,[role=button]').length;
+        },
+        // prevent keyboard focus since element selection is only needed for drag-n-drop
+        makeFocusable: false,
+      };
     },
 
     initElementSort: function () {
@@ -133,29 +157,48 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
           filter: this.settings.selectable
             ? () => {
                 // Only return all the selected items if the target item is selected
-                if (this.elementSort.$targetItem.hasClass('sel')) {
-                  return this.elementSelect.getSelectedItems();
+                if (
+                  this.elementSort.$targetItem
+                    .children('.element')
+                    .hasClass('sel')
+                ) {
+                  return this.elementSelect.getSelectedItems().parent('li');
                 } else {
                   return this.elementSort.$targetItem;
                 }
               }
             : null,
           ignoreHandleSelector: '.delete',
+          handle: (() => {
+            switch (this.settings.viewMode) {
+              case 'list':
+              case 'large':
+                return '> .element > .chip-content > .chip-actions > .move';
+              case 'cards':
+                return '> .element > .card-actions-container > .card-actions > .move';
+              default:
+                return null;
+            }
+          })(),
           axis: this.getElementSortAxis(),
           collapseDraggees: true,
           magnetStrength: 4,
           helperLagBase: 1.5,
-          onSortChange: this.settings.selectable
-            ? () => {
-                this.elementSelect.resetItemOrder();
-              }
-            : null,
+          onSortChange: () => {
+            this.onSortChange();
+          },
         });
       }
     },
 
     getElementSortAxis: function () {
-      return this.settings.viewMode === 'list' ? 'y' : null;
+      if (
+        ['list'].includes(this.settings.viewMode) &&
+        !this.getElementsContainer().hasClass('inline-chips')
+      ) {
+        return 'y';
+      }
+      return null;
     },
 
     canAddMoreElements: function () {
@@ -173,7 +216,7 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
     },
 
     enableAddElementsBtn: function () {
-      if (this.$addElementBtn) {
+      if (this.$addElementBtn.length) {
         this.$addElementBtn.removeClass('hidden');
       }
 
@@ -181,7 +224,7 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
     },
 
     disableAddElementsBtn: function () {
-      if (this.$addElementBtn) {
+      if (this.$addElementBtn.length) {
         this.$addElementBtn.addClass('hidden');
       }
 
@@ -206,7 +249,7 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
 
     updateButtonContainer: function () {
       const $container =
-        this.$addElementBtn && this.$addElementBtn.parent('.flex');
+        this.$addElementBtn.length && this.$addElementBtn.parent('.flex');
       if ($container && $container.length) {
         if ($container.children(':not(.hidden)').length) {
           $container.removeClass('hidden');
@@ -219,10 +262,8 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
     focusNextLogicalElement: function () {
       if (this.canAddMoreElements()) {
         // If can add more elements, focus ADD button
-        let $btn = this.$addElementBtn;
-
-        if ($btn) {
-          $btn.get(0).focus();
+        if (this.$addElementBtn.length) {
+          this.$addElementBtn.get(0).focus();
         }
       } else {
         // If can't add more elements, focus on the final remove
@@ -249,6 +290,55 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
     },
 
     addElements: function ($elements) {
+      // add the action triggers
+      for (let i = 0; i < $elements.length; i++) {
+        const $element = $elements.eq(i);
+        const actions = this.defineElementActions($element);
+
+        if (actions.length) {
+          Craft.addActionsToChip($element, actions);
+
+          const disclosureMenu = $element
+            .find(
+              '> .chip-content > .chip-actions .action-btn, > .card-actions-container > .card-actions .action-btn'
+            )
+            .data('disclosureMenu');
+          const moveForwardBtn = disclosureMenu.$container.find(
+            '[data-move-forward]'
+          )[0];
+          const moveBackwardBtn = disclosureMenu.$container.find(
+            '[data-move-backward]'
+          )[0];
+
+          disclosureMenu.on('show', () => {
+            const $li = $element.parent();
+            const $prev = $li.prev();
+            const $next = $li.next();
+
+            if (moveForwardBtn) {
+              disclosureMenu.toggleItem(moveForwardBtn, $prev.length);
+            }
+            if (moveBackwardBtn) {
+              disclosureMenu.toggleItem(moveBackwardBtn, $next.length);
+            }
+          });
+        }
+
+        if (this.settings.sortable) {
+          $('<button/>', {
+            type: 'button',
+            class: 'move icon',
+            title: Craft.t('app', 'Reorder'),
+            'aria-label': Craft.t('app', 'Reorder'),
+            'aria-describedby': $element.find('.label').attr('id'),
+          }).appendTo(
+            $element.find(
+              '> .chip-content > .chip-actions, > .card-actions-container > .card-actions'
+            )
+          );
+        }
+      }
+
       Craft.cp.elementThumbLoader.load($elements);
 
       if (this.settings.selectable) {
@@ -256,11 +346,16 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
       }
 
       if (this.settings.sortable) {
-        this.elementSort.addItems($elements);
+        this.elementSort.addItems($elements.parent('li'));
       }
 
       if (this.settings.editable) {
         this._handleShowElementEditor = (ev) => {
+          // don't open the edit slideout if we are tapholding to drag
+          if (ev.type === 'taphold' && ev.target.nodeName === 'BUTTON') {
+            return;
+          }
+
           var $element = $(ev.currentTarget);
           if (
             Garnish.hasAttr($element, 'data-editable') &&
@@ -278,12 +373,6 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
         }
       }
 
-      $elements.find('.delete').on('click dblclick', (ev) => {
-        this.removeElement($(ev.currentTarget).closest('.element'));
-        // Prevent this from acting as one of a double-click
-        ev.stopPropagation();
-      });
-
       $elements.on('keydown', (ev) => {
         if ([Garnish.BACKSPACE_KEY, Garnish.DELETE_KEY].includes(ev.keyCode)) {
           ev.stopPropagation();
@@ -298,8 +387,63 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
       this.$elements = this.$elements.add($elements);
 
       this.updateAddElementsBtn();
-
       this.onAddElements();
+      this.onSortChange();
+    },
+
+    defineElementActions: function ($element) {
+      const actions = [];
+
+      if (this.settings.sortable) {
+        const axis = this.getElementSortAxis();
+        actions.push({
+          icon:
+            axis === 'y'
+              ? 'arrow-up'
+              : Craft.orientation === 'ltr'
+                ? 'arrow-left'
+                : 'arrow-right',
+          label:
+            axis === 'y'
+              ? Craft.t('app', 'Move up')
+              : Craft.t('app', 'Move forward'),
+          callback: () => {
+            this.moveElementForward($element);
+          },
+          attributes: {
+            'data-move-forward': true,
+          },
+        });
+        actions.push({
+          icon:
+            axis === 'y'
+              ? 'arrow-down'
+              : Craft.orientation === 'ltr'
+                ? 'arrow-right'
+                : 'arrow-left',
+          label:
+            axis === 'y'
+              ? Craft.t('app', 'Move down')
+              : Craft.t('app', 'Move backward'),
+          callback: () => {
+            this.moveElementBackward($element);
+          },
+          attributes: {
+            'data-move-backward': true,
+          },
+        });
+      }
+
+      actions.push({
+        icon: 'remove',
+        label: Craft.t('app', 'Remove'),
+        callback: () => {
+          this.removeElement($element);
+        },
+        destructive: true,
+      });
+
+      return actions;
     },
 
     createElementEditor: function ($element, settings) {
@@ -335,26 +479,68 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
           thumbSize: this.settings.viewMode,
         };
 
-        Craft.sendActionRequest('POST', 'elements/get-element-html', {data})
-          .then((response) => {
+        Craft.sendActionRequest('POST', 'app/render-elements', {
+          data: {
+            elements: [
+              {
+                type: this.settings.elementType,
+                id: replacementId,
+                siteId: this.settings.criteria.siteId,
+                instances: [
+                  {
+                    context: 'field',
+                    ui: ['list', 'large'].includes(this.settings.viewMode)
+                      ? 'chip'
+                      : 'card',
+                    size:
+                      this.settings.viewMode === 'large' ? 'large' : 'small',
+                    showActionMenu: this.settings.showActionMenu,
+                  },
+                ],
+              },
+            ],
+          },
+        })
+          .then(async ({data}) => {
             this.removeElement($existing);
-            const elementInfo = Craft.getElementInfo(response.data.html);
-            this.selectElements([elementInfo]);
-            resolve();
+            const elementInfo = Craft.getElementInfo(
+              data.elements[replacementId][0]
+            );
+            this.selectElements([elementInfo]).then(resolve);
+            await Craft.appendHeadHtml(data.headHtml);
+            await Craft.appendBodyHtml(data.bodyHtml);
           })
-          .catch(({response}) => {
-            if (response && response.data && response.data.message) {
-              Craft.cp.displayError(response.data.message);
-            } else {
-              Craft.cp.displayError();
-            }
-
-            reject(response.data.message);
+          .catch((e) => {
+            Craft.cp.displayError(e?.response?.data?.message);
+            reject(e?.response?.data?.message);
           })
           .finally(() => {
             this.hideSpinner();
           });
       });
+    },
+
+    onSortChange() {
+      this.elementSelect?.resetItemOrder();
+      this.$elements = $().add(this.$elements);
+    },
+
+    moveElementForward($element) {
+      const $li = $element.closest('li');
+      const $prev = $li.prev();
+      if ($prev.length) {
+        $li.insertBefore($prev);
+        this.onSortChange();
+      }
+    },
+
+    moveElementBackward($element) {
+      const $li = $element.closest('li');
+      const $next = $li.next();
+      if ($next.length) {
+        $li.insertAfter($next);
+        this.onSortChange();
+      }
     },
 
     removeElements: function ($elements) {
@@ -382,22 +568,20 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
       $elements.children('input').prop('disabled', true);
 
       // Move the focus to the next element in the list, if there is one
-      let $nextDeleteBtn;
+      let $nextElement;
       if (this.settings.selectable) {
         const lastElementIndex = this.$elements.index($elements.last());
-        $nextDeleteBtn = this.$elements
-          .eq(lastElementIndex + 1)
-          .find('.delete');
+        $nextElement = this.$elements.eq(lastElementIndex + 1);
       }
-      if ($nextDeleteBtn.length) {
-        $nextDeleteBtn.focus();
+      if ($nextElement.length) {
+        $nextElement.focus();
       } else {
         this.focusNextLogicalElement();
       }
 
       this.$elements = this.$elements.not($elements);
       this.updateAddElementsBtn();
-
+      this.onSortChange();
       this.onRemoveElements();
     },
 
@@ -423,7 +607,7 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
         $('[name]', $element).removeAttr('name');
         this.removeElements($element);
         this.animateElementAway($element, () => {
-          $element.remove();
+          $element.parent('li').remove();
         });
       }
     },
@@ -438,7 +622,10 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
         $element.outerWidth() + parseInt($element.css('margin-' + Craft.right))
       );
 
-      if (this.settings.viewMode === 'list' || this.$elements.length === 0) {
+      if (
+        ['list', 'cards'].includes(this.settings.viewMode) ||
+        this.$elements.length === 0
+      ) {
         animateCss['margin-bottom'] = -(
           $element.outerHeight() + parseInt($element.css('margin-bottom'))
         );
@@ -463,6 +650,7 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
 
       if (!this.modal) {
         this.modal = this.createModal();
+        this.modalFirstOpen = false;
       } else {
         this.modal.show();
       }
@@ -476,7 +664,7 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
     },
 
     getModalSettings: function () {
-      return $.extend(
+      const settings = $.extend(
         {
           closeOtherModals: false,
           storageKey: this.modalStorageKey,
@@ -484,9 +672,9 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
           condition: this.settings.condition,
           referenceElementId: this.settings.referenceElementId,
           referenceElementSiteId: this.settings.referenceElementSiteId,
-          criteria: this.settings.criteria,
+          criteria: Object.assign({}, this.settings.criteria),
           multiSelect: this.settings.limit != 1,
-          hideOnSelect: !this.settings.maintainHierarchy,
+          hideOnSelect: false,
           showSiteMenu: this.settings.showSiteMenu,
           disabledElementIds: this.getDisabledElementIds(),
           onSelect: this.onModalSelect.bind(this),
@@ -496,6 +684,14 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
         },
         this.settings.modalSettings
       );
+
+      // make sure the previously-selected source is retained each time the
+      // modal is re-opened
+      if (!this.modalFirstOpen) {
+        settings.preferStoredSource = true;
+      }
+
+      return settings;
     },
 
     getSelectedElementIds: function () {
@@ -522,9 +718,57 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
       return ids;
     },
 
-    onModalSelect: function (elements) {
+    onModalSelect: async function (elements) {
+      // Disable the modal
+      this.modal.disable();
+      this.modal.disableCancelBtn();
+      this.modal.disableSelectBtn();
+      this.modal.showFooterSpinner();
+
+      // re-render the elements even if the view modes match, to be sure we have all the correct settings
+      const [inputUiType, inputUiSize] = (() => {
+        switch (this.settings.viewMode) {
+          case 'large':
+            return ['chip', 'large'];
+          case 'cards':
+            return ['card', null];
+          default:
+            return ['chip', 'small'];
+        }
+      })();
+      const {data} = await Craft.sendActionRequest(
+        'POST',
+        'app/render-elements',
+        {
+          data: {
+            elements: [
+              {
+                type: this.settings.elementType,
+                id: elements.map((e) => e.id),
+                siteId: elements[0].siteId,
+                instances: [
+                  {
+                    context: 'field',
+                    ui: inputUiType,
+                    size: inputUiSize,
+                    showActionMenu: this.settings.showActionMenu,
+                  },
+                ],
+              },
+            ],
+          },
+        }
+      );
+
+      for (let i = 0; i < elements.length; i++) {
+        if (typeof data.elements[elements[i].id] !== 'undefined') {
+          elements[i].$modalElement = elements[i].$element;
+          elements[i].$element = $(data.elements[elements[i].id][0]);
+        }
+      }
+
       if (this.settings.maintainHierarchy) {
-        this.selectStructuredElements(elements);
+        await this.selectStructuredElements(elements);
       } else {
         if (this.settings.limit) {
           // Cut off any excess elements
@@ -535,9 +779,19 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
           }
         }
 
-        this.selectElements(elements);
+        await this.selectElements(elements);
         this.updateDisabledElementsInModal();
       }
+
+      // Re-enable and hide the modal
+      this.modal.enable();
+      this.modal.enableCancelBtn();
+      this.modal.enableSelectBtn();
+      this.modal.hideFooterSpinner();
+      this.modal.hide();
+
+      await Craft.appendHeadHtml(data.headHtml);
+      await Craft.appendBodyHtml(data.bodyHtml);
     },
 
     onModalHide: function () {
@@ -560,14 +814,18 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
       }, 200);
     },
 
-    selectElements: function (elements) {
+    selectElements: async function (elements) {
       for (let i = 0; i < elements.length; i++) {
         let elementInfo = elements[i],
           $element = this.createNewElement(elementInfo);
 
         this.appendElement($element);
         this.addElements($element);
-        this.animateElementIntoPlace(elementInfo.$element, $element);
+
+        const $modalElement = elementInfo.$modalElement || elementInfo.$element;
+        if ($modalElement && $modalElement.parent().length) {
+          this.animateElementIntoPlace($modalElement, $element);
+        }
 
         // Override the element reference with the new one
         elementInfo.$element = $element;
@@ -576,13 +834,7 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
       this.onSelectElements(elements);
     },
 
-    selectStructuredElements: function (elements) {
-      // Disable the modal
-      this.modal.disable();
-      this.modal.disableCancelBtn();
-      this.modal.disableSelectBtn();
-      this.modal.showFooterSpinner();
-
+    selectStructuredElements: async function (elements) {
       // Get the new element HTML
       var selectedElementIds = this.getSelectedElementIds();
 
@@ -600,45 +852,33 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
         elementType: this.settings.elementType,
       };
 
-      const onResponse = () => {
-        this.modal.enable();
-        this.modal.enableCancelBtn();
-        this.modal.enableSelectBtn();
-        this.modal.hideFooterSpinner();
-      };
-      Craft.sendActionRequest(
+      const response = await Craft.sendActionRequest(
         'POST',
         'relational-fields/structured-input-html',
         {data}
-      )
-        .then((response) => {
-          onResponse();
-          var $newInput = $(response.data.html),
-            $newElementsContainer = $newInput.children('.elements');
+      );
 
-          this.$elementsContainer.replaceWith($newElementsContainer);
-          this.$elementsContainer = $newElementsContainer;
-          this.resetElements();
+      const $newInput = $(response.data.html),
+        $newElementsContainer = $newInput.children('.elements');
 
-          var filteredElements = [];
+      this.$elementsContainer.replaceWith($newElementsContainer);
+      this.$elementsContainer = $newElementsContainer;
+      this.resetElements();
 
-          for (var i = 0; i < elements.length; i++) {
-            var element = elements[i],
-              $element = this.getElementById(element.id);
+      const filteredElements = [];
 
-            if ($element) {
-              this.animateElementIntoPlace(element.$element, $element);
-              filteredElements.push(element);
-            }
-          }
+      for (let i = 0; i < elements.length; i++) {
+        const element = elements[i];
+        const $element = this.getElementById(element.id);
 
-          this.updateDisabledElementsInModal();
-          this.modal.hide();
-          this.onSelectElements(filteredElements);
-        })
-        .catch(({response}) => {
-          onResponse();
-        });
+        if ($element) {
+          this.animateElementIntoPlace(element.$element, $element);
+          filteredElements.push(element);
+        }
+      }
+
+      this.updateDisabledElementsInModal();
+      this.onSelectElements(filteredElements);
     },
 
     createNewElement: function (elementInfo) {
@@ -651,35 +891,28 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
         $element,
         this.settings.viewMode === 'large' ? 'large' : 'small'
       );
-      $element
-        .addClass('removable')
-        .prepend(
-          $('<input/>', {
-            type: 'hidden',
-            name: this.settings.name + (this.settings.single ? '' : '[]'),
-            value: elementInfo.id,
-          })
-        )
-        .prepend(
-          $('<button/>', {
-            type: 'button',
-            class: 'delete icon',
-            title: Craft.t('app', 'Remove'),
-            'aria-label': removeText,
-          })
-        );
+      $element.addClass('removable').append(
+        $('<input/>', {
+          type: 'hidden',
+          name: this.settings.name + (this.settings.single ? '' : '[]'),
+          value: elementInfo.id,
+        })
+      );
 
       return $element;
     },
 
     appendElement: function ($element) {
-      $element.appendTo(this.$elementsContainer);
+      $('<li/>').append($element).appendTo(this.$elementsContainer);
     },
 
     animateElementIntoPlace: function ($modalElement, $inputElement) {
       var origOffset = $modalElement.offset(),
         destOffset = $inputElement.offset(),
-        $helper = $inputElement.clone().appendTo(Garnish.$bod);
+        $helper = $inputElement
+          .clone()
+          .appendTo(Garnish.$bod)
+          .width($inputElement.width());
 
       $inputElement.css('visibility', 'hidden');
 
@@ -799,6 +1032,7 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
       onRemoveElements: $.noop,
       sortable: true,
       selectable: true,
+      showActionMenu: true,
       editable: true,
       prevalidate: false,
       editorSettings: {},

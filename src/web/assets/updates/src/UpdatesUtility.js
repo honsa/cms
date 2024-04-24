@@ -9,6 +9,7 @@ import './updates.scss';
     criticalUpdateAvailable: false,
     allowUpdates: null,
     installableUpdates: null,
+    availableUpdatesCount: null,
 
     init: function () {
       this.$body = $('#content');
@@ -17,55 +18,64 @@ import './updates.scss';
         $status = $('#status');
 
       this.installableUpdates = [];
+      this.availableUpdatesCount = 0;
 
       var data = {
         forceRefresh: true,
         includeDetails: true,
       };
 
-      Craft.cp.checkForUpdates(true, true, (data) => {
-        this.allowUpdates = data.allowUpdates;
+      Craft.cp.checkForUpdates(
+        true,
+        true,
+        (data) => {
+          this.allowUpdates = data.allowUpdates;
 
-        // Craft CMS update?
-        if (data.updates.cms) {
-          this.processUpdate(data.updates.cms, false);
-        }
-
-        // Plugin updates?
-        if (data.updates.plugins && data.updates.plugins.length) {
-          for (var i = 0; i < data.updates.plugins.length; i++) {
-            this.processUpdate(data.updates.plugins[i], true);
-          }
-        }
-
-        if (this.showUpdates) {
-          $graphic.remove();
-          $status.remove();
-
-          if (this.installableUpdates.length) {
-            // Add the page title
-            var headingText = Craft.t(
-              'app',
-              '{num, number} {num, plural, =1{Available Update} other{Available Updates}}',
-              {
-                num: this.installableUpdates.length,
-              }
-            );
-
-            $('#header h1').text(headingText);
+          // Craft CMS update?
+          if (data.updates.cms) {
+            this.processUpdate(data.updates.cms, false);
           }
 
-          if (this.allowUpdates && this.installableUpdates.length > 1) {
-            this.createUpdateForm(
-              Craft.t('app', 'Update all'),
-              this.installableUpdates
-            ).insertAfter($('#header > .flex:last'));
+          // Plugin updates?
+          if (data.updates.plugins && data.updates.plugins.length) {
+            for (var i = 0; i < data.updates.plugins.length; i++) {
+              this.processUpdate(data.updates.plugins[i], true);
+            }
           }
-        } else {
-          $graphic.removeClass('spinner').addClass('success');
-          $status.text(Craft.t('app', 'You’re all up to date!'));
+
+          if (this.showUpdates) {
+            $graphic.remove();
+            $status.remove();
+
+            if (this.availableUpdatesCount > 0) {
+              // Add the page title
+              var headingText = Craft.t(
+                'app',
+                '{num, number} {num, plural, =1{Available Update} other{Available Updates}}',
+                {
+                  num: this.availableUpdatesCount,
+                }
+              );
+
+              $('#header h1').text(headingText);
+            }
+
+            if (this.allowUpdates && this.installableUpdates.length > 1) {
+              this.createUpdateForm(
+                Craft.t('app', 'Update all'),
+                this.installableUpdates
+              ).insertAfter($('#header > .flex:last'));
+            }
+          } else {
+            $graphic.removeClass('spinner').addClass('success');
+            $status.text(Craft.t('app', 'You’re all up to date!'));
+          }
+        },
+        () => {
+          $graphic.removeClass('spinner').addClass('error');
+          $status.text(Craft.t('app', 'Unable to fetch updates at this time.'));
         }
-      });
+      );
     },
 
     processUpdate: function (updateInfo, isPlugin) {
@@ -74,6 +84,9 @@ import './updates.scss';
         var update = new Update(this, updateInfo, isPlugin);
         if (update.installable) {
           this.installableUpdates.push(update);
+        }
+        if (update.available) {
+          this.availableUpdatesCount++;
         }
       }
     },
@@ -132,6 +145,7 @@ import './updates.scss';
     updateInfo: null,
     isPlugin: null,
     installable: false,
+    available: false,
 
     $container: null,
     $header: null,
@@ -147,7 +161,9 @@ import './updates.scss';
       this.updatesPage = updatesPage;
       this.updateInfo = updateInfo;
       this.isPlugin = isPlugin;
-      this.installable = !!this.updateInfo.releases.length;
+      this.installable = this.available =
+        this.updateInfo.status !== 'phpIssue' &&
+        !!this.updateInfo.releases.length;
 
       this.createPane();
       this.initReleases();
@@ -170,10 +186,12 @@ import './updates.scss';
             '</p></blockquote>'
         ).insertBefore(this.$releaseContainer);
 
-        if (
-          this.updateInfo.status === 'expired' ||
-          this.updateInfo.latestVersion === null
-        ) {
+        if (this.updateInfo.latestVersion === null) {
+          this.installable = false;
+          this.available = false;
+        }
+
+        if (this.updateInfo.status === 'expired') {
           this.installable = false;
         }
       }
@@ -215,11 +233,24 @@ import './updates.scss';
           class: 'btn submit',
           text: this.updateInfo.ctaText,
           href: this.updateInfo.ctaUrl,
+          target: '_blank',
         }).appendTo($buttonContainer);
       } else {
         this.updatesPage
           .createUpdateForm(this.updateInfo.ctaText, [this])
           .appendTo($buttonContainer);
+      }
+      if (typeof this.updateInfo.altCtaUrl !== 'undefined') {
+        $('<a/>', {
+          class: 'btn hairline',
+          text: this.updateInfo.altCtaText,
+          href: this.updateInfo.altCtaUrl,
+        }).appendTo($buttonContainer);
+      } else if (typeof this.updateInfo.altCtaText !== 'undefined') {
+        const $form = this.updatesPage
+          .createUpdateForm(this.updateInfo.altCtaText, [this])
+          .appendTo($buttonContainer);
+        $form.find('button').removeClass('submit').addClass('hairline');
       }
     },
 
