@@ -2207,7 +2207,7 @@ $.extend(Craft, {
    * Retrieves a value from localStorage if it exists.
    *
    * @param {string} key
-   * @param {*} defaultValue
+   * @param {*} [defaultValue]
    */
   getLocalStorage: function (key, defaultValue) {
     key = 'Craft-' + Craft.systemUid + '.' + key;
@@ -2412,11 +2412,13 @@ $.extend(Craft, {
             )
             .detach();
           const $inputs = $element.find('input,button').detach();
-          $element.html($replacement.html());
+          $element.html($replacement.html()).removeClass('error');
 
           if ($actions.length) {
             const $oldStatus = $actions.find('span.status');
-            const $newStatus = $replacement.find('span.status');
+            const $newStatus = $replacement.find(
+              '> .chip-content .chip-actions span.status,> .card-actions-container .card-actions span.status'
+            );
 
             if (
               $oldStatus.length &&
@@ -2976,6 +2978,7 @@ $.extend($.fn, {
         confirm: $btn.data('confirm'),
         action: $btn.data('action'),
         redirect: $btn.data('redirect'),
+        retainScroll: Garnish.hasAttr($btn, 'data-retain-scroll'),
         requireElevatedSession: Garnish.hasAttr(
           $btn,
           'data-require-elevated-session'

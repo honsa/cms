@@ -443,20 +443,24 @@ class Matrix extends Field implements
      */
     public function getEntryTypesForField(array $value, ?ElementInterface $element): array
     {
-        // Let plugins/modules override which entry types should be available for this field
-        $event = new DefineEntryTypesForFieldEvent([
-            'entryTypes' => $this->getEntryTypes(),
-            'element' => $element,
-            'value' => $value,
-        ]);
-        $this->trigger(self::EVENT_DEFINE_ENTRY_TYPES, $event);
-        $entryTypes = array_values($event->entryTypes);
+        $entryTypes = $this->getEntryTypes();
+
+        // Fire a 'defineEntryTypes' event
+        if ($this->hasEventHandlers(self::EVENT_DEFINE_ENTRY_TYPES)) {
+            $event = new DefineEntryTypesForFieldEvent([
+                'entryTypes' => $entryTypes,
+                'element' => $element,
+                'value' => $value,
+            ]);
+            $this->trigger(self::EVENT_DEFINE_ENTRY_TYPES, $event);
+            $entryTypes = $event->entryTypes;
+        }
 
         if (empty($entryTypes)) {
             throw new InvalidConfigException('At least one entry type is required.');
         }
 
-        return $entryTypes;
+        return array_values($entryTypes);
     }
 
     /**
@@ -553,11 +557,6 @@ class Matrix extends Field implements
             return false;
         }
 
-        // If this is a new entry, make sure we aren't hitting the Max Entries limit
-        if (!$element->id && $element->getIsCanonical() && $this->maxEntriesReached($element->getOwner())) {
-            return false;
-        }
-
         return true;
     }
 
@@ -596,14 +595,7 @@ class Matrix extends Field implements
      */
     public function canDeleteElementForSite(NestedElementInterface $element, User $user): ?bool
     {
-        $owner = $element->getOwner();
-
-        if (!$owner || !Craft::$app->getElements()->canSave($owner, $user)) {
-            return false;
-        }
-
-        // Make sure we aren't hitting the Min Entries limit
-        return !$this->minEntriesReached($owner);
+        return false;
     }
 
     private function minEntriesReached(ElementInterface $owner): bool
@@ -629,11 +621,9 @@ class Matrix extends Field implements
 
         if ($value instanceof EntryQuery) {
             return (clone $value)
-                ->drafts(null)
                 ->status(null)
-                ->site('*')
+                ->siteId($owner->siteId)
                 ->limit(null)
-                ->unique()
                 ->count();
         }
 
@@ -738,7 +728,7 @@ class Matrix extends Field implements
 
         foreach ($value->all() as $entry) {
             /** @var Entry $entry */
-            $entryId = $entry->id ?? 'new' . ++$new;
+            $entryId = $entry->id ?? sprintf('new%s', ++$new);
             $serialized[$entryId] = [
                 'title' => $entry->title,
                 'slug' => $entry->slug,
@@ -865,10 +855,22 @@ class Matrix extends Field implements
             // and so not passed to PHP for save
             $view->setInitialDeltaValue($this->handle, null);
 
+            $js .= "\n" . <<<JS
+input.on('afterInit', async () => {
+  input.elementEditor?.pause();
+JS . "\n";
+
             $entryTypeJs = Json::encode($entryTypes[0]->handle);
             for ($i = count($value); $i < $this->minEntries; $i++) {
-                $js .= "\ninput.addEntry($entryTypeJs, null, false);";
+                $js .= <<<JS
+  await input.addEntry($entryTypeJs, null, false);
+JS . "\n";
             }
+
+            $js .= <<<JS
+  input.elementEditor?.resume();
+});
+JS;
         }
 
         $view->registerJs("(() => {\n$js\n})();");
@@ -981,6 +983,7 @@ class Matrix extends Field implements
     {
         /** @var EntryQuery|ElementCollection $value */
         $value = $element->getFieldValue($this->handle);
+        $new = 0;
 
         if ($value instanceof EntryQuery) {
             /** @var Entry[] $entries */
@@ -1001,7 +1004,8 @@ class Matrix extends Field implements
                 }
 
                 if (!$entry->validate()) {
-                    $element->addModelErrors($entry, "$this->handle[$entry->uid]");
+                    $key = $entry->uid ?? sprintf('new%s', ++$new);
+                    $element->addModelErrors($entry, sprintf('%s[%s]', $this->handle, $key));
                     $allEntriesValidate = false;
                 }
             }
