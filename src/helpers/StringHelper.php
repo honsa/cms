@@ -125,7 +125,7 @@ class StringHelper extends \yii\helpers\StringHelper
 
     /**
      * Returns ASCII character mappings, merging in any custom defined mappings
-     * from the <config4:customAsciiCharMappings> config setting.
+     * from the <config5:customAsciiCharMappings> config setting.
      *
      * @param bool $flat Whether the mappings should be returned as a flat array (é => e)
      * @param string|null $language Whether to include language-specific mappings (only applied if $flat is true)
@@ -915,13 +915,7 @@ class StringHelper extends \yii\helpers\StringHelper
     public static function lines(string $str): array
     {
         $lines = BaseStringy::create($str)->lines();
-
-        foreach ($lines as $i => $line) {
-            $lines[$i] = $line;
-        }
-
-        /** @var string[] $lines */
-        return $lines;
+        return array_map(fn(BaseStringy $line) => (string)$line, $lines);
     }
 
     /**
@@ -1822,6 +1816,9 @@ class StringHelper extends \yii\helpers\StringHelper
         // Handle must start with a letter
         $handle = preg_replace('/^[^a-z]+/', '', $handle);
 
+        // Replace any remaining non-alphanumeric or underscore characters with spaces
+        $handle = preg_replace('/[^a-z0-9_]/', ' ', $handle);
+
         return static::toCamelCase($handle);
     }
 
@@ -2041,7 +2038,7 @@ class StringHelper extends \yii\helpers\StringHelper
      *
      * @param string $str
      * @return string
-     * @since 4.10.0
+     * @since 5.2.0
      */
     public static function indent(string $str, string $indent = '    '): string
     {

@@ -75,6 +75,7 @@ class Schema extends \yii\db\pgsql\Schema
      *
      * @param string $name
      * @return string
+     * @deprecated in 5.4.0
      */
     public function quoteDatabaseName(string $name): string
     {
@@ -278,7 +279,7 @@ class Schema extends \yii\db\pgsql\Schema
      * Whether `pg_restore` should be used for the restore command.
      *
      * @return bool
-     * @since 4.9.0
+     * @since 5.1.0
      */
     public function usePgRestore(): bool
     {
@@ -396,7 +397,7 @@ ORDER BY i.relname, k';
      * Returns the backup format that should be used (`custom`, `directory`, `tar`, or `plain`).
      *
      * @return string|null
-     * @since 4.10.0
+     * @since 5.2.0
      */
     public function getBackupFormat(): ?string
     {
@@ -407,7 +408,7 @@ ORDER BY i.relname, k';
      * Sets the backup format that should be used (`custom`, `directory`, `tar`, or `plain`).
      *
      * @param string|null $backupFormat
-     * @since 4.10.0
+     * @since 5.2.0
      */
     public function setBackupFormat(?string $backupFormat): void
     {
@@ -418,7 +419,7 @@ ORDER BY i.relname, k';
      * Returns the restore format that should be used (`custom`, `directory`, `tar`, or `plain`).
      *
      * @return string|null
-     * @since 4.10.0
+     * @since 5.2.0
      */
     public function getRestoreFormat(): ?string
     {
@@ -429,7 +430,7 @@ ORDER BY i.relname, k';
      * Sets the restore format that should be used (`custom`, `directory`, `tar`, or `plain`).
      *
      * @param string|null $restoreFormat
-     * @since 4.10.0
+     * @since 5.2.0
      */
     public function setRestoreFormat(?string $restoreFormat): void
     {

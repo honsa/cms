@@ -9,11 +9,11 @@ namespace craft\controllers;
 
 use Craft;
 use craft\base\ElementContainerFieldInterface;
+use craft\base\FieldInterface;
 use craft\elements\Entry;
 use craft\enums\Color;
 use craft\helpers\Cp;
 use craft\helpers\Html;
-use craft\helpers\UrlHelper;
 use craft\models\EntryType;
 use craft\models\Section;
 use craft\web\Controller;
@@ -105,16 +105,8 @@ class EntryTypesController extends Controller
 
                         $labels = [];
                         $items = array_map(function(Section|ElementContainerFieldInterface $usage) use (&$labels) {
-                            if ($usage instanceof Section) {
-                                $label = Craft::t('site', $usage->name);
-                                $url = $usage->getCpEditUrl();
-                                $icon = 'newspaper';
-                            } else {
-                                $label = Craft::t('site', $usage->name);
-                                $url = UrlHelper::cpUrl("settings/fields/edit/$usage->id");
-                                $icon = $usage::icon();
-                            }
-                            $labels[] = $label;
+                            $icon = $usage instanceof FieldInterface ? $usage::icon() : $usage->getIcon();
+                            $label = $labels[] = $usage->getUiLabel();
                             $labelHtml = Html::beginTag('span', [
                                     'class' => ['flex', 'flex-nowrap', 'gap-s'],
                                 ]) .
@@ -123,7 +115,7 @@ class EntryTypesController extends Controller
                                 ]) .
                                 Html::tag('span', Html::encode($label)) .
                                 Html::endTag('span');
-                            return Html::a($labelHtml, $url);
+                            return Html::a($labelHtml, $usage->getCpEditUrl());
                         }, $entryType->findUsages());
 
                         // sort by label
@@ -233,8 +225,16 @@ class EntryTypesController extends Controller
         $page = (int)$this->request->getParam('page', 1);
         $limit = (int)$this->request->getParam('per_page', 100);
         $searchTerm = $this->request->getParam('search');
+        $orderBy = match ($this->request->getParam('sort.0.field')) {
+            '__slot:handle' => 'handle',
+            default => 'name',
+        };
+        $sortDir = match ($this->request->getParam('sort.0.direction')) {
+            'desc' => SORT_DESC,
+            default => SORT_ASC,
+        };
 
-        [$pagination, $tableData] = $entriesService->getTableData($page, $limit, $searchTerm);
+        [$pagination, $tableData] = $entriesService->getTableData($page, $limit, $searchTerm, $orderBy, $sortDir);
 
         return $this->asSuccess(data: [
             'pagination' => $pagination,

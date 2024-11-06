@@ -584,12 +584,16 @@ class Db
         $condition = [$param->operator];
         $isMysql = self::db()->getIsMysql();
 
-        // Only PostgreSQL supports case-sensitive strings
-        if ($isMysql) {
+        // Only PostgreSQL supports case-sensitive strings on non-JSON column values
+        if ($isMysql && $columnType !== Schema::TYPE_JSON) {
             $caseInsensitive = false;
         }
 
-        $caseColumn = $caseInsensitive ? "lower([[$column]])" : $column;
+        if ($caseInsensitive) {
+            $caseColumn = str_contains($column, '(') ? "lower($column)" : "lower([[$column]])";
+        } else {
+            $caseColumn = $column;
+        }
 
         $inVals = [];
         $notInVals = [];
@@ -664,7 +668,7 @@ class Db
                 }
 
                 if ($like) {
-                    if ($caseInsensitive) {
+                    if ($caseInsensitive && !$isMysql) {
                         $operator = $operator === '=' ? 'ilike' : 'not ilike';
                     } else {
                         $operator = $operator === '=' ? 'like' : 'not like';
@@ -1498,7 +1502,7 @@ class Db
             return true;
         }
 
-        $result = $db->createCommand("SELECT CONVERT_TZ('2007-03-11 2:00:00','US/Eastern','US/Central') AS time1")->queryScalar();
+        $result = $db->createCommand("SELECT CONVERT_TZ('2007-03-11 02:00:00','America/Los_Angeles','America/New_York') AS time1")->queryScalar();
         return (bool)$result;
     }
 

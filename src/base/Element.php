@@ -12,6 +12,8 @@ use Craft;
 use craft\behaviors\CustomFieldBehavior;
 use craft\behaviors\DraftBehavior;
 use craft\behaviors\RevisionBehavior;
+use craft\db\CoalesceColumnsExpression;
+use craft\db\Command;
 use craft\db\Connection;
 use craft\db\Query;
 use craft\db\Table;
@@ -26,6 +28,7 @@ use craft\elements\conditions\ElementConditionInterface;
 use craft\elements\db\EagerLoadPlan;
 use craft\elements\db\ElementQuery;
 use craft\elements\db\ElementQueryInterface;
+use craft\elements\db\NestedElementQueryInterface;
 use craft\elements\ElementCollection;
 use craft\elements\exporters\Expanded;
 use craft\elements\exporters\Raw;
@@ -351,7 +354,7 @@ abstract class Element extends Component implements ElementInterface
     public const EVENT_DEFINE_ADDITIONAL_BUTTONS = 'defineAdditionalButtons';
 
     /**
-     * @event DefineMenuComponentEvent The event that is triggered when defining action menu items..
+     * @event DefineMenuItemsEvent The event that is triggered when defining action menu items..
      * @see getActionMenuItems()
      * @since 5.0.0
      */
@@ -1180,13 +1183,15 @@ abstract class Element extends Component implements ElementInterface
         bool $selectable,
         bool $sortable,
     ): string {
+        $request = Craft::$app->getRequest();
+        $static = $viewState['static'] ?? false;
         $variables = [
             'viewMode' => $viewState['mode'],
             'context' => $context,
             'disabledElementIds' => $disabledElementIds,
-            'collapsedElementIds' => Craft::$app->getRequest()->getParam('collapsedElementIds'),
-            'selectable' => $selectable,
-            'sortable' => $sortable,
+            'collapsedElementIds' => $request->getParam('collapsedElementIds'),
+            'selectable' => !$static && $selectable,
+            'sortable' => !$static && $sortable,
             'showHeaderColumn' => $viewState['showHeaderColumn'] ?? false,
             'inlineEditing' => $viewState['inlineEditing'] ?? false,
             'nestedInputNamespace' => $viewState['nestedInputNamespace'] ?? null,
@@ -1267,14 +1272,22 @@ abstract class Element extends Component implements ElementInterface
 
         $elements = static::indexElements($elementQuery, $sourceKey);
 
-        if (empty($elements)) {
-            return Html::tag('div', Craft::t('app', 'Nothing yet.'), [
-                'class' => ['zilch', 'small'],
-            ]);
+        if (empty($elements) && !$includeContainer) {
+            // load-more request
+            return '';
         }
 
         // See if there are any provisional drafts we should swap these out with
         ElementHelper::swapInProvisionalDrafts($elements);
+
+        if ($request->getParam('prevalidate')) {
+            foreach ($elements as $element) {
+                if ($element->enabled && $element->getEnabledForSite()) {
+                    $element->setScenario(Element::SCENARIO_LIVE);
+                }
+                $element->validate();
+            }
+        }
 
         $variables['elements'] = $elements;
         $template = '_elements/' . $viewState['mode'] . 'view/' . ($includeContainer ? 'container' : 'elements');
@@ -1991,7 +2004,16 @@ abstract class Element extends Component implements ElementInterface
         // See if it's a source-specific sort option
         foreach (Craft::$app->getElementSources()->getSourceSortOptions(static::class, $sourceKey) as $sortOption) {
             if ($sortOption['attribute'] === $attribute) {
-                return $sortOption['orderBy'];
+                if ($sortOption['orderBy'] instanceof CoalesceColumnsExpression) {
+                    $params = [];
+                    $sql = $sortOption['orderBy']->getSql($params);
+                } elseif (is_string($sortOption['orderBy'])) {
+                    $sql = $sortOption['orderBy'];
+                } else {
+                    return $sortOption['orderBy'];
+                }
+
+                return new Expression(sprintf('%s %s', $sql, $dir === SORT_ASC ? 'ASC' : 'DESC'), $params ?? []);
             }
         }
 
@@ -2156,6 +2178,13 @@ abstract class Element extends Component implements ElementInterface
      * @see getNextSibling()
      */
     private ElementInterface|false|null $_nextSibling = null;
+
+    /**
+     * @var int[]
+     * @see getInvalidNestedElementIds()
+     * @see addInvalidNestedElementIds()
+     */
+    private array $_invalidNestedElementIds = [];
 
     /**
      * @var array<string,ElementCollection>
@@ -2611,7 +2640,7 @@ abstract class Element extends Component implements ElementInterface
                 ['slug'],
                 'required',
                 'when' => fn() => (bool)preg_match('/\bslug\b/', $this->getUriFormat() ?? ''),
-                'on' => [self::SCENARIO_DEFAULT, self::SCENARIO_LIVE, self::SCENARIO_ESSENTIALS],
+                'on' => [self::SCENARIO_DEFAULT, self::SCENARIO_LIVE],
             ];
             $rules[] = [['uri'], ElementUriValidator::class, 'on' => [self::SCENARIO_DEFAULT, self::SCENARIO_LIVE, self::SCENARIO_ESSENTIALS]];
         }
@@ -2635,6 +2664,7 @@ abstract class Element extends Component implements ElementInterface
     public function validate($attributeNames = null, $clearErrors = true)
     {
         $this->_attributeNames = $attributeNames ? array_flip((array)$attributeNames) : null;
+        $this->_invalidNestedElementIds = [];
         $result = parent::validate($attributeNames, $clearErrors);
         $this->_attributeNames = null;
         return $result;
@@ -2853,16 +2883,23 @@ abstract class Element extends Component implements ElementInterface
         $prop = $anySite ? '_canonicalAnySite' : '_canonical';
 
         if (!isset($this->$prop)) {
-            $this->$prop = static::find()
-                    ->id($this->_canonicalId)
-                    ->siteId($anySite ? '*' : $this->siteId)
-                    ->preferSites([$this->siteId])
-                    ->structureId($this->structureId)
-                    ->unique()
-                    ->status(null)
-                    ->trashed(null)
-                    ->ignorePlaceholders()
-                    ->one() ?? false;
+            $query = static::find()
+                ->id($this->_canonicalId)
+                ->siteId($anySite ? '*' : $this->siteId)
+                ->preferSites([$this->siteId])
+                ->structureId($this->structureId)
+                ->unique()
+                ->status(null)
+                ->trashed(null)
+                ->ignorePlaceholders();
+
+            if ($this instanceof NestedElementInterface && $query instanceof NestedElementQueryInterface) {
+                $query
+                    ->fieldId($this->getField()?->id)
+                    ->ownerId($this->getOwnerId());
+            }
+
+            $this->$prop = $query->one();
         }
 
         return $this->$prop ?: $this;
@@ -3177,7 +3214,7 @@ abstract class Element extends Component implements ElementInterface
     public function getCrumbs(): array
     {
         if ($this instanceof NestedElementInterface) {
-            $owner = $this->getPrimaryOwner();
+            $owner = $this->getOwner();
             if ($owner) {
                 return [
                     ...$owner->getCrumbs(),
@@ -3254,6 +3291,14 @@ abstract class Element extends Component implements ElementInterface
     public function getChipLabelHtml(): string
     {
         return Html::encode($this->getUiLabel());
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function showStatusIndicator(): bool
+    {
+        return static::hasStatuses();
     }
 
     /**
@@ -3544,6 +3589,7 @@ abstract class Element extends Component implements ElementInterface
      *
      * @return array
      * @see getActionMenuItems()
+     * @see Cp::disclosureMenu()
      * @since 5.0.0
      */
     protected function safeActionMenuItems(): array
@@ -3585,10 +3631,11 @@ JS, [
                 $view->namespaceInputId($editId),
                 static::class,
                 [
-                    'elementId' => $this->id,
-                    'draftId' => $this->draftId,
+                    'elementId' => $this->isProvisionalDraft ? $this->getCanonicalId() : $this->id,
+                    'draftId' => $this->isProvisionalDraft ? null : $this->draftId,
                     'revisionId' => $this->revisionId,
                     'siteId' => $this->siteId,
+                    'ownerId' => $this instanceof NestedElementInterface ? $this->getOwnerId() : null,
                 ],
             ]);
         }
@@ -3605,6 +3652,7 @@ JS, [
      *
      * @return array
      * @see getActionMenuItems()
+     * @see Cp::disclosureMenu()
      * @since 5.0.0
      */
     protected function destructiveActionMenuItems(): array
@@ -3959,6 +4007,20 @@ JS, [
 
     /**
      * @inheritdoc
+     */
+    public function getRootOwner(): ElementInterface
+    {
+        if ($this instanceof NestedElementInterface) {
+            $owner = $this->getOwner();
+            if ($owner) {
+                return $owner->getRootOwner();
+            }
+        }
+        return $this;
+    }
+
+    /**
+     * @inheritdoc
      * @since 3.5.0
      */
     public function getLocalized(): ElementQueryInterface|ElementCollection
@@ -4142,11 +4204,8 @@ JS, [
      */
     private function _checkForNewParent(): bool
     {
-        // Make sure this is a structured element, and that it’s either canonical or a provisional draft
-        if (
-            !$this->structureId ||
-            (!$this->getIsCanonical() && !$this->isProvisionalDraft)
-        ) {
+        // Make sure this is a structured element
+        if (!$this->structureId) {
             return false;
         }
 
@@ -4161,7 +4220,7 @@ JS, [
         }
 
         // If this is a provisional draft, but doesn't actually exist in the structure yet, check based on the canonical element
-        if ($this->isProvisionalDraft && !isset($this->lft)) {
+        if ($this->getIsDerivative() && !isset($this->lft)) {
             $element = $this->getCanonical(true);
         } else {
             $element = $this;
@@ -4960,8 +5019,32 @@ JS, [
     /**
      * @inheritdoc
      */
+    public function getInvalidNestedElementIds(): array
+    {
+        return $this->_invalidNestedElementIds;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function addInvalidNestedElementIds(array $ids): void
+    {
+        array_push($this->_invalidNestedElementIds, ...$ids);
+    }
+
+    /**
+     * @inheritdoc
+     */
     public function hasEagerLoadedElements(string $handle): bool
     {
+        if (!isset($this->_eagerLoadedElements[$handle])) {
+            // See if we have it stored with the field layout provider’s handle
+            $providerHandle = $this->providerHandle();
+            if ($providerHandle !== null && isset($this->_eagerLoadedElements["$providerHandle:$handle"])) {
+                $handle = "$providerHandle:$handle";
+            }
+        }
+
         return isset($this->_eagerLoadedElements[$handle]);
     }
 
@@ -4971,7 +5054,13 @@ JS, [
     public function getEagerLoadedElements(string $handle): ?ElementCollection
     {
         if (!isset($this->_eagerLoadedElements[$handle])) {
-            return null;
+            // See if we have it stored with the field layout provider’s handle
+            $providerHandle = $this->providerHandle();
+            if ($providerHandle !== null && isset($this->_eagerLoadedElements["$providerHandle:$handle"])) {
+                $handle = "$providerHandle:$handle";
+            } else {
+                return null;
+            }
         }
 
         $elements = $this->_eagerLoadedElements[$handle];
@@ -5038,6 +5127,14 @@ JS, [
      */
     public function getEagerLoadedElementCount(string $handle): ?int
     {
+        if (!isset($this->_eagerLoadedElementCounts[$handle])) {
+            // See if we have it stored with the field layout provider’s handle
+            $providerHandle = $this->providerHandle();
+            if ($providerHandle !== null && isset($this->_eagerLoadedElements["$providerHandle:$handle"])) {
+                $handle = "$providerHandle:$handle";
+            }
+        }
+
         return $this->_eagerLoadedElementCounts[$handle] ?? null;
     }
 
@@ -5047,6 +5144,15 @@ JS, [
     public function setEagerLoadedElementCount(string $handle, int $count): void
     {
         $this->_eagerLoadedElementCounts[$handle] = $count;
+    }
+
+    private function providerHandle(): ?string
+    {
+        try {
+            return $this->getFieldLayout()?->provider?->getHandle();
+        } catch (InvalidConfigException) {
+            return null;
+        }
     }
 
     /**
@@ -5763,6 +5869,9 @@ JS,
      */
     public function afterSave(bool $isNew): void
     {
+        // Update the element’s relation data
+        $this->updateRelations();
+
         // Tell the fields about it
         foreach ($this->fieldLayoutFields() as $field) {
             $field->afterElementSave($this, $isNew);
@@ -5776,6 +5885,149 @@ JS,
         }
     }
 
+    private function updateRelations(): void
+    {
+        if (!$this->hasFieldLayout()) {
+            return;
+        }
+
+        $fields = $this->relationalFields();
+
+        /** @var int[] $skipFieldIds */
+        $skipFieldIds = [];
+        /** @var array<int,int|null> $sourceSiteIds */
+        $sourceSiteIds = [];
+        /** @var array<int,array<int,int>> $relationData */
+        $relationData = [];
+
+        foreach ($fields as $fieldId => $instances) {
+            $localizeRelations = $instances[0]->localizeRelations();
+            $include = false;
+
+            foreach ($instances as $field) {
+                // Skip if nothing changed, or the element is just propagating and we're not localizing relations
+                if (
+                    ($this->duplicateOf || $this->isFieldDirty($field->handle) || $field->forceUpdateRelations($this)) &&
+                    (!$this->propagating || $localizeRelations)
+                ) {
+                    $include = true;
+                    break;
+                }
+            }
+
+            if ($include) {
+                // Create target ID => sort order mappings for the field
+                foreach ($instances as $field) {
+                    $sourceSiteIds[$field->id] = $localizeRelations ? $this->siteId : null;
+                    $relationData[$field->id] ??= [];
+                    foreach ($field->getRelationTargetIds($this) as $targetId) {
+                        if (!isset($relationData[$field->id][$targetId])) {
+                            $relationData[$field->id][$targetId] = count($relationData[$field->id]) + 1;
+                        }
+                    }
+                }
+            } else {
+                $skipFieldIds[] = $fieldId;
+            }
+        }
+
+        // Get the old relations
+        $db = Craft::$app->getDb();
+        $query = (new Query())
+            ->select(['id', 'fieldId', 'sourceSiteId', 'targetId', 'sortOrder'])
+            ->from([Table::RELATIONS])
+            ->where(['sourceId' => $this->id])
+            ->andWhere(['or', ['sourceSiteId' => null], ['sourceSiteId' => $this->siteId]]);
+        if (!empty(($skipFieldIds))) {
+            // Exclude the skipped fields rather than listing included fields,
+            // so we also get any relations for fields that aren't part of the layout
+            // (https://github.com/craftcms/cms/issues/13956)
+            $query->andWhere(['not', ['fieldId' => $skipFieldIds]]);
+        }
+        $oldRelations = $query->all($db);
+
+        /** @var Command[] $updateCommands */
+        $updateCommands = [];
+        $deleteIds = [];
+
+        foreach ($oldRelations as $relation) {
+            [$relationId, $fieldId, $oldSourceSiteId, $targetId, $oldSortOrder] = [
+                $relation['id'],
+                $relation['fieldId'],
+                $relation['sourceSiteId'],
+                $relation['targetId'],
+                $relation['sortOrder'],
+            ];
+
+            // Does this relation still exist?
+            if (isset($relationData[$fieldId][$targetId])) {
+                // Anything to update?
+                if ($oldSourceSiteId != $sourceSiteIds[$fieldId] || $oldSortOrder != $relationData[$fieldId][$targetId]) {
+                    $updateCommands[] = $db->createCommand()->update(Table::RELATIONS, [
+                        'sourceSiteId' => $sourceSiteIds[$fieldId],
+                        'sortOrder' => $relationData[$fieldId][$targetId],
+                    ], ['id' => $relationId]);
+                }
+
+                // Avoid re-inserting it
+                unset($relationData[$fieldId][$targetId]);
+                if (empty($relationData[$fieldId])) {
+                    unset($relationData[$fieldId]);
+                }
+            } else {
+                $deleteIds[] = $relationId;
+            }
+        }
+
+        if (empty($updateCommands) && empty($deleteIds) && empty($relationData)) {
+            // Nothing to do here
+            return;
+        }
+
+        $db->transaction(function() use ($updateCommands, $deleteIds, $relationData, $sourceSiteIds, $db) {
+            foreach ($updateCommands as $command) {
+                $command->execute();
+            }
+
+            // Add the new ones
+            if (!empty($relationData)) {
+                $values = [];
+                foreach ($relationData as $fieldId => $targetIds) {
+                    foreach ($targetIds as $targetId => $sortOrder) {
+                        $values[] = [
+                            $fieldId,
+                            $this->id,
+                            $sourceSiteIds[$fieldId],
+                            $targetId,
+                            $sortOrder,
+                        ];
+                    }
+                }
+                Db::batchInsert(Table::RELATIONS, ['fieldId', 'sourceId', 'sourceSiteId', 'targetId', 'sortOrder'], $values, $db);
+            }
+
+            if (!empty($deleteIds)) {
+                Db::delete(Table::RELATIONS, [
+                    'id' => $deleteIds,
+                ], [], $db);
+            }
+        });
+    }
+
+    /**
+     * @return array<int,RelationalFieldInterface[]>
+     */
+    private function relationalFields(): array
+    {
+        $fields = [];
+        foreach ($this->fieldLayoutFields() as $field) {
+            if ($field instanceof RelationalFieldInterface) {
+                $fields[$field->id][] = $field;
+            }
+        }
+        return $fields;
+    }
+
     /**
      * @inheritdoc
      */
@@ -5784,11 +6036,6 @@ JS,
         // Tell the fields about it
         foreach ($this->fieldLayoutFields() as $field) {
             $field->afterElementPropagate($this, $isNew);
-        }
-
-        // Delete relations that don’t belong to a relational field on the element's field layout
-        if (!ElementHelper::isDraftOrRevision($this)) {
-            Craft::$app->getRelations()->deleteLeftoverRelations($this);
         }
 
         // Fire an 'afterPropagate' event
@@ -5857,9 +6104,22 @@ JS,
      */
     public function afterDeleteForSite(): void
     {
+        // Delete any site-specific relation data
+        $this->deleteSiteRelations();
+
         // Tell the fields about it
         foreach ($this->fieldLayoutFields() as $field) {
             $field->afterElementDeleteForSite($this);
+        }
+    }
+
+    private function deleteSiteRelations(): void
+    {
+        if ($this->hasFieldLayout()) {
+            Db::delete(Table::RELATIONS, [
+                'sourceSiteId' => $this->siteId,
+                'sourceId' => $this->id,
+            ]);
         }
     }
 

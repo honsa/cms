@@ -29,6 +29,7 @@ use craft\enums\MenuItemType;
 use craft\enums\PropagationMethod;
 use craft\events\AuthenticateUserEvent;
 use craft\events\DefineValueEvent;
+use craft\fieldlayoutelements\users\FullNameField;
 use craft\helpers\App;
 use craft\helpers\ArrayHelper;
 use craft\helpers\DateTimeHelper;
@@ -38,6 +39,7 @@ use craft\helpers\Json;
 use craft\helpers\Session;
 use craft\helpers\StringHelper;
 use craft\helpers\UrlHelper;
+use craft\helpers\User as UserHelper;
 use craft\i18n\Formatter;
 use craft\models\FieldLayout;
 use craft\models\UserGroup;
@@ -59,6 +61,7 @@ use yii\base\InvalidArgumentException;
 use yii\base\InvalidConfigException;
 use yii\base\NotSupportedException;
 use yii\validators\InlineValidator;
+use yii\validators\RequiredValidator;
 use yii\validators\Validator;
 use yii\web\BadRequestHttpException;
 use yii\web\IdentityInterface;
@@ -298,7 +301,7 @@ class User extends Element implements IdentityInterface
             ],
         ];
 
-        if (Craft::$app->edition === CmsEdition::Pro) {
+        if (Craft::$app->edition->value >= CmsEdition::Pro->value) {
             $sources = array_merge($sources, [
                 [
                     'key' => 'admins',
@@ -505,11 +508,11 @@ class User extends Element implements IdentityInterface
         if ($handle == 'addresses') {
             $map = (new Query())
                 ->select([
-                    'source' => 'ownerId',
+                    'source' => 'primaryOwnerId',
                     'target' => 'id',
                 ])
                 ->from([Table::ADDRESSES])
-                ->where(['ownerId' => $sourceElementIds])
+                ->where(['primaryOwnerId' => $sourceElementIds])
                 ->all();
 
             return [
@@ -769,6 +772,10 @@ class User extends Element implements IdentityInterface
             $this->email = StringHelper::idnToUtf8Email($this->email);
         }
 
+        if (empty($this->username) && Craft::$app->getConfig()->getGeneral()->useEmailAsUsername) {
+            $this->username = $this->email;
+        }
+
         $this->normalizeNames();
     }
 
@@ -880,6 +887,27 @@ class User extends Element implements IdentityInterface
     /**
      * @inheritdoc
      */
+    public function afterValidate(): void
+    {
+        $scenario = $this->getScenario();
+
+        if ($scenario === self::SCENARIO_LIVE) {
+            $fullNameElement = $this->getFieldLayout()->getFirstVisibleElementByType(FullNameField::class, $this);
+            if ($fullNameElement && $fullNameElement->required) {
+                if (Craft::$app->getConfig()->getGeneral()->showFirstAndLastNameFields) {
+                    (new RequiredValidator(['attributes' => ['firstName', 'lastName']]))->validateAttributes($this, ['firstName', 'lastName']);
+                } else {
+                    (new RequiredValidator())->validateAttribute($this, 'fullName');
+                }
+            }
+        }
+
+        parent::afterValidate();
+    }
+
+    /**
+     * @inheritdoc
+     */
     protected function defineRules(): array
     {
         $rules = parent::defineRules();
@@ -905,13 +933,24 @@ class User extends Element implements IdentityInterface
 
         if (Craft::$app->getIsInstalled()) {
             $rules[] = [
-                ['username', 'email'],
+                ['email'],
                 UniqueValidator::class,
                 'targetClass' => UserRecord::class,
                 'caseInsensitive' => true,
                 'filter' => ['or', ['active' => true], ['pending' => true]],
                 'when' => $treatAsActive,
             ];
+
+            if (!Craft::$app->getConfig()->getGeneral()->useEmailAsUsername) {
+                $rules[] = [
+                    ['username'],
+                    UniqueValidator::class,
+                    'targetClass' => UserRecord::class,
+                    'caseInsensitive' => true,
+                    'filter' => ['or', ['active' => true], ['pending' => true]],
+                    'when' => $treatAsActive,
+                ];
+            }
 
             $rules[] = [['unverifiedEmail'], 'validateUnverifiedEmail'];
         }
@@ -970,7 +1009,7 @@ class User extends Element implements IdentityInterface
                 // are they allowed to set the email?
                 if ($this->getIsCurrent() || $userSession->checkPermission('administrateUsers')) {
                     if (
-                        Craft::$app->edition === CmsEdition::Pro &&
+                        Craft::$app->edition->value >= CmsEdition::Pro->value &&
                         Craft::$app->getProjectConfig()->get('users.requireEmailVerification') &&
                         !$userSession->checkPermission('administrateUsers')
                     ) {
@@ -1082,7 +1121,9 @@ class User extends Element implements IdentityInterface
                 return ElementCollection::make();
             }
 
-            $this->_addresses = $this->createAddressQuery()->collect();
+            $this->_addresses = $this->createAddressQuery()
+                ->andWhere(['fieldId' => null])
+                ->collect();
         }
 
         return $this->_addresses;
@@ -1293,7 +1334,7 @@ class User extends Element implements IdentityInterface
             return $this->_groups;
         }
 
-        if (Craft::$app->edition !== CmsEdition::Pro || !isset($this->id)) {
+        if (Craft::$app->edition < CmsEdition::Pro || !isset($this->id)) {
             return [];
         }
 
@@ -1307,7 +1348,7 @@ class User extends Element implements IdentityInterface
      */
     public function setGroups(array $groups): void
     {
-        if (Craft::$app->edition === CmsEdition::Pro) {
+        if (Craft::$app->edition->value >= CmsEdition::Pro->value) {
             $this->_groups = $groups;
         }
     }
@@ -1320,7 +1361,7 @@ class User extends Element implements IdentityInterface
      */
     public function isInGroup(UserGroup|int|string $group): bool
     {
-        if (Craft::$app->edition !== CmsEdition::Pro) {
+        if (Craft::$app->edition < CmsEdition::Pro) {
             return false;
         }
 
@@ -1489,7 +1530,9 @@ class User extends Element implements IdentityInterface
         // Choose a color based on the UUID
         $uid = strtolower($this->uid ?? '00ff');
         $totalColors = count(self::$photoColors);
+        /** @phpstan-ignore-next-line */
         $color1Index = base_convert(substr($uid, 0, 2), 16, 10) % $totalColors;
+        /** @phpstan-ignore-next-line */
         $color2Index = base_convert(substr($uid, 2, 2), 16, 10) % $totalColors;
         if ($color2Index === $color1Index) {
             $color2Index = ($color1Index + 1) % $totalColors;
@@ -1650,7 +1693,7 @@ XML;
      */
     public function canAssignUserGroups(): bool
     {
-        if (Craft::$app->edition === CmsEdition::Pro) {
+        if (Craft::$app->edition->value >= CmsEdition::Pro->value) {
             foreach (Craft::$app->getUserGroups()->getAllGroups() as $group) {
                 if ($this->can("assignUserGroup:$group->uid")) {
                     return true;
@@ -1888,7 +1931,6 @@ XML;
                         'params' => [
                             'userId' => $this->id,
                         ],
-                        'redirect' => Craft::$app->getConfig()->getGeneral()->getPostCpLoginRedirect(),
                     ];
 
                     $copyImpersonationUrlId = sprintf('action-copy-impersonation-url-%s', mt_rand());
@@ -2281,6 +2323,10 @@ JS, [
             return false;
         }
 
+        if (Craft::$app->getConfig()->getGeneral()->useEmailAsUsername) {
+            $this->username = $this->email;
+        }
+
         return parent::beforeSave($isNew);
     }
 
@@ -2486,6 +2532,8 @@ JS, [
 
     /**
      * Returns the [[authError]] value for [[authenticate()]] and [[authenticateWithPasskey()]].
+     *
+     * @todo Nate! Duplicate of UserHelper::getAuthStatus()
      *
      * @return self::AUTH_*|null
      */

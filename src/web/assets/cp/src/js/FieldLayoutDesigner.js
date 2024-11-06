@@ -58,7 +58,7 @@ Craft.FieldLayoutDesigner = Garnish.Base.extend(
       // Set up the layout grids
       this.tabGrid = new Craft.Grid(this.$tabContainer, {
         itemSelector: '.fld-tab',
-        minColWidth: 24 * 11,
+        minColWidth: 24 * 12,
         fillMode: 'grid',
         snapToGrid: 24,
       });
@@ -374,7 +374,7 @@ Craft.FieldLayoutDesigner = Garnish.Base.extend(
         // Hold off a sec until it's positioned...
         Garnish.requestAnimationFrame(() => {
           // Focus on the first text input
-          slideout.$container.find('.text:first').trigger('focus');
+          slideout.$container.find('.text:first').focus();
         });
       });
 
@@ -431,11 +431,7 @@ Craft.FieldLayoutDesigner.Tab = Garnish.Base.extend({
     const $tabContent = this.$container.children('.fld-tabcontent');
     this.$addBtn = $tabContent.children('.fld-add-btn');
 
-    const disclosureMenu = this.$addBtn
-      .disclosureMenu({
-        position: 'below',
-      })
-      .data('disclosureMenu');
+    const disclosureMenu = this.$addBtn.disclosureMenu().data('disclosureMenu');
     disclosureMenu.on('beforeShow', () => {
       this.designer.$libraryContainer.appendTo(disclosureMenu.$container);
     });
@@ -1659,6 +1655,15 @@ Craft.FieldLayoutDesigner.ElementDrag =
       }
 
       this.setMidpoints();
+
+      // If we're dragging an element from the library, and it's within a disclosure menu,
+      // hide the menu
+      if (this.draggingLibraryElement) {
+        const $menu = this.$draggee.closest('.fld-library-menu');
+        if ($menu.length) {
+          $menu.data('disclosureMenu').hide();
+        }
+      }
     },
 
     /**

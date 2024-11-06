@@ -531,6 +531,7 @@ class ElementIndexesController extends BaseElementsController
             ->id($elementIds)
             ->status(null)
             ->drafts(null)
+            ->provisionalDrafts(null)
             ->siteId($siteId)
             ->all();
 
@@ -570,7 +571,7 @@ class ElementIndexesController extends BaseElementsController
             );
 
             if (!$element->validate($names)) {
-                $errors[$element->id] = $element->getErrors();
+                $errors[$element->getCanonicalId()] = $element->getErrors();
             }
         }
 
@@ -838,7 +839,7 @@ class ElementIndexesController extends BaseElementsController
 
         // Get the action head/foot HTML before any more is added to it from the element HTML
         if ($includeActions) {
-            $responseData['actions'] = $this->actionData();
+            $responseData['actions'] = $this->viewState['static'] === true ? [] : $this->actionData();
             $responseData['actionsHeadHtml'] = $view->getHeadHtml();
             $responseData['actionsBodyHtml'] = $view->getBodyHtml();
             $responseData['exporters'] = $this->exporterData();
@@ -1025,42 +1026,24 @@ class ElementIndexesController extends BaseElementsController
             throw new BadRequestHttpException("Request missing required body param");
         }
 
-        /** @var string|ElementInterface $elementType */
-        $elementType = $this->elementType;
         $id = $this->request->getRequiredBodyParam('id');
-        $siteId = $this->request->getRequiredBodyParam('siteId');
-        $site = $siteId ? Craft::$app->getSites()->getSiteById($siteId) : null;
-
         if (!$id || !is_numeric($id)) {
             throw new BadRequestHttpException("Invalid element ID: $id");
         }
 
-        if (!$site) {
-            throw new BadRequestHttpException("Invalid site ID: $siteId");
-        }
-
-        if (Craft::$app->getIsMultiSite() && !Craft::$app->getUser()->checkPermission("editSite:$site->uid")) {
-            throw new ForbiddenHttpException('User not authorized to edit content for this site.');
-        }
-
         // check for a provisional draft first
         /** @var ElementInterface|null $element */
-        $element = $elementType::find()
+        $element = (clone $this->elementQuery)
             ->draftOf($id)
             ->draftCreator(static::currentUser())
             ->provisionalDrafts()
-            ->siteId($siteId)
             ->status(null)
             ->one();
 
         if (!$element) {
             /** @var ElementInterface|null $element */
-            $element = $elementType::find()
+            $element = (clone $this->elementQuery)
                 ->id($id)
-                ->drafts(null)
-                ->provisionalDrafts(null)
-                ->revisions(null)
-                ->siteId($siteId)
                 ->status(null)
                 ->one();
         }
@@ -1069,7 +1052,11 @@ class ElementIndexesController extends BaseElementsController
             throw new BadRequestHttpException("Invalid element ID: $id");
         }
 
-        $attributes = Craft::$app->getElementSources()->getTableAttributes($this->elementType, $this->sourceKey);
+        $attributes = Craft::$app->getElementSources()->getTableAttributes(
+            $this->elementType,
+            $this->sourceKey,
+            $this->viewState['tableColumns'] ?? null,
+        );
         $attributeHtml = [];
 
         foreach ($attributes as [$attribute]) {

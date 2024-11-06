@@ -104,6 +104,12 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
           }
         });
       }
+
+      setTimeout(() => {
+        this.elementEditor = this.$container
+          .closest('form')
+          .data('elementEditor');
+      }, 100);
     },
 
     get totalSelected() {
@@ -185,6 +191,23 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
           collapseDraggees: true,
           magnetStrength: 4,
           helperLagBase: 1.5,
+          onBeforeDragStart: () => {
+            this.elementEditor?.pause();
+
+            // Disable all craft-element-labels so connectedCallback()
+            // doesn't get fired constantly during drag
+            this.$elementsContainer
+              .find('craft-element-label')
+              .attr('disabled', true);
+          },
+          onDragStop: () => {
+            this.elementEditor?.resume();
+
+            // Put things back where we found them.
+            this.$elementsContainer
+              .find('craft-element-label')
+              .removeAttr('disabled');
+          },
           onSortChange: () => {
             this.onSortChange();
           },
@@ -204,7 +227,8 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
 
     canAddMoreElements: function () {
       return (
-        !this.settings.limit || this.$elements.length < this.settings.limit
+        this.settings.allowAdd &&
+        (!this.settings.limit || this.$elements.length < this.settings.limit)
       );
     },
 
@@ -217,7 +241,7 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
     },
 
     enableAddElementsBtn: function () {
-      if (this.$addElementBtn.length) {
+      if (this.settings.allowAdd && this.$addElementBtn.length) {
         this.$addElementBtn.removeClass('hidden');
       }
 
@@ -263,7 +287,10 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
     focusNextLogicalElement: function () {
       if (this.canAddMoreElements()) {
         // If can add more elements, focus ADD button
-        if (this.$addElementBtn.length) {
+        if (
+          this.$addElementBtn.length &&
+          !this.$addElementBtn.hasClass('hidden')
+        ) {
           this.$addElementBtn.get(0).focus();
         }
       } else {
@@ -272,12 +299,13 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
       }
     },
 
+    /** @deprecated */
     focusLastRemoveBtn: function () {
-      const $removeBtns = this.$container.find('.delete');
+      this.focusLastActionBtn();
+    },
 
-      if (!$removeBtns.length) return;
-
-      $removeBtns.last()[0].focus();
+    focusLastActionBtn: function () {
+      this.$container.find('.action-btn').last().focus();
     },
 
     resetElements: function () {
@@ -363,7 +391,7 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
             !$element.hasClass('disabled') &&
             !$element.hasClass('loading')
           ) {
-            this.elementEditor = this.createElementEditor($element);
+            this.createElementEditor($element);
           }
         };
 
@@ -435,19 +463,21 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
         });
       }
 
-      actions.push({
-        icon: 'remove',
-        label: Craft.t('app', 'Remove'),
-        callback: () => {
-          // If the element is selected, remove *all* the selected elements
-          if (this.elementSelect?.isSelected($element)) {
-            this.removeElement(this.elementSelect.getSelectedItems());
-          } else {
-            this.removeElement($element);
-          }
-        },
-        destructive: true,
-      });
+      if (this.settings.allowRemove) {
+        actions.push({
+          icon: 'remove',
+          label: Craft.t('app', 'Remove'),
+          callback: () => {
+            // If the element is selected, remove *all* the selected elements
+            if (this.elementSelect?.isSelected($element)) {
+              this.removeElement(this.elementSelect.getSelectedItems());
+            } else {
+              this.removeElement($element);
+            }
+          },
+          destructive: true,
+        });
+      }
 
       return actions;
     },
@@ -586,7 +616,9 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
       if ($nextElement?.length) {
         $nextElement.focus();
       } else {
-        this.focusNextLogicalElement();
+        setTimeout(() => {
+          this.focusNextLogicalElement();
+        }, 200);
       }
 
       this.$elements = this.$elements.not($elements);
@@ -624,36 +656,35 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
       } else {
         for (let i = 0; i < $elements.length; i++) {
           const $element = $elements.eq(i);
-          this.animateElementAway($element, () => {
-            $element.parent('li').remove();
-          });
+          const $li = $element.parent('li');
+          this.animateElementAway($element);
+          $li.remove();
         }
       }
     },
 
     animateElementAway: function ($element, callback) {
-      $element.css('z-index', 0);
+      const offset = $element.offset();
+      const width = $element.width();
 
-      var animateCss = {
+      $element.appendTo(Garnish.$bod).css({
+        'z-index': 0,
+        position: 'absolute',
+        top: offset.top,
+        left: offset.left,
+        maxWidth: width + 'px',
+      });
+
+      const animateCss = {
         opacity: -1,
+        left: offset.left + 100 * (Craft.orientation === 'ltr' ? -1 : 1),
       };
-      animateCss['margin-' + Craft.left] = -(
-        $element.outerWidth() + parseInt($element.css('margin-' + Craft.right))
-      );
-
-      if (
-        ['list', 'cards'].includes(this.settings.viewMode) ||
-        this.$elements.length === 0
-      ) {
-        animateCss['margin-bottom'] = -(
-          $element.outerHeight() + parseInt($element.css('margin-bottom'))
-        );
-      }
 
       $element.velocity(
         animateCss,
         Craft.BaseElementSelectInput.REMOVE_FX_DURATION,
         () => {
+          $element.remove();
           if (callback) {
             callback();
           }
@@ -998,10 +1029,9 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
 
       // Is this the last one?
       if (i === $allElements.length - 1) {
+        const $li = $allElements.first().parent().parent();
+        const $ul = $li.parent();
         callback = () => {
-          const $li = $allElements.first().parent().parent();
-          const $ul = $li.parent();
-
           if ($ul[0] === this.$elementsContainer[0] || $li.siblings().length) {
             $li.remove();
           } else {
@@ -1035,6 +1065,8 @@ Craft.BaseElementSelectInput = Garnish.Base.extend(
       referenceElementId: null,
       referenceElementSiteId: null,
       criteria: {},
+      allowAdd: true,
+      allowRemove: true,
       allowSelfRelations: false,
       sourceElementId: null,
       disabledElementIds: null,

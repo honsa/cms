@@ -52,6 +52,7 @@ use yii\db\Connection as YiiConnection;
 use yii\db\Expression;
 use yii\db\ExpressionInterface;
 use yii\db\QueryBuilder;
+use yii\db\Schema;
 
 /**
  * ElementQuery represents a SELECT SQL statement for elements in a way that is independent of DBMS.
@@ -323,11 +324,21 @@ class ElementQuery extends Query implements ElementQueryInterface
     /**
      * @var mixed The element relation criteria.
      *
-     * See [Relations](https://craftcms.com/docs/4.x/relations.html) for supported syntax options.
+     * See [Relations](https://craftcms.com/docs/5.x/system/relations.html) for supported syntax options.
      *
      * @used-by relatedTo()
      */
     public mixed $relatedTo = null;
+
+    /**
+     * @var mixed The element relation criteria.
+     *
+     * See [Relations](https://craftcms.com/docs/5.x/system/relations.html) for supported syntax options.
+     *
+     * @used-by notRelatedTo()
+     * @since 5.4.0
+     */
+    public mixed $notRelatedTo = null;
 
     /**
      * @var mixed The title that resulting elements must have.
@@ -350,7 +361,7 @@ class ElementQuery extends Query implements ElementQueryInterface
     /**
      * @var mixed The search term to filter the resulting elements by.
      *
-     * See [Searching](https://craftcms.com/docs/4.x/searching.html) for supported syntax options.
+     * See [Searching](https://craftcms.com/docs/5.x/system/searching.html) for supported syntax options.
      *
      * @used-by ElementQuery::search()
      */
@@ -379,7 +390,7 @@ class ElementQuery extends Query implements ElementQueryInterface
     /**
      * @var string|array|null The eager-loading declaration.
      *
-     * See [Eager-Loading Elements](https://craftcms.com/docs/4.x/dev/eager-loading-elements.html) for supported syntax options.
+     * See [Eager-Loading Elements](https://craftcms.com/docs/5.x/development/eager-loading.html) for supported syntax options.
      *
      * @used-by with()
      * @used-by andWith()
@@ -565,6 +576,13 @@ class ElementQuery extends Query implements ElementQueryInterface
      * @see joinElementTable()
      */
     private bool $_joinedElementTable = false;
+
+    /**
+     * @var array<string,string|string[]> Column alias => cast type
+     * @see prepare()
+     * @see _applyOrderByParams()
+     */
+    private array $_columnsToCast = [];
 
     /**
      * Constructor
@@ -1082,6 +1100,33 @@ class ElementQuery extends Query implements ElementQueryInterface
 
     /**
      * @inheritdoc
+     * @uses $notRelatedTo
+     * @since 5.4.0
+     */
+    public function notRelatedTo($value): static
+    {
+        $this->notRelatedTo = $value;
+        return $this;
+    }
+
+    /**
+     * @inheritdoc
+     * @uses $notRelatedTo
+     * @since 5.4.0
+     */
+    public function andNotRelatedTo($value): static
+    {
+        $relatedTo = $this->_andRelatedToCriteria($value, $this->notRelatedTo);
+
+        if ($relatedTo === false) {
+            return $this;
+        }
+
+        return $this->notRelatedTo($relatedTo);
+    }
+
+    /**
+     * @inheritdoc
      * @uses $relatedTo
      */
     public function relatedTo($value): static
@@ -1097,16 +1142,33 @@ class ElementQuery extends Query implements ElementQueryInterface
      */
     public function andRelatedTo($value): static
     {
-        if (!$value) {
+        $relatedTo = $this->_andRelatedToCriteria($value, $this->relatedTo);
+
+        if ($relatedTo === false) {
             return $this;
         }
 
-        if (!$this->relatedTo) {
-            return $this->relatedTo($value);
+        return $this->relatedTo($relatedTo);
+    }
+
+    /**
+     * @param $value
+     * @param $currentValue
+     * @return mixed
+     * @throws NotSupportedException
+     */
+    private function _andRelatedToCriteria($value, $currentValue): mixed
+    {
+        if (!$value) {
+            return false;
+        }
+
+        if (!$currentValue) {
+            return $value;
         }
 
         // Normalize so element/targetElement/sourceElement values get pushed down to the 2nd level
-        $relatedTo = ElementRelationParamParser::normalizeRelatedToParam($this->relatedTo);
+        $relatedTo = ElementRelationParamParser::normalizeRelatedToParam($currentValue);
         $criteriaCount = count($relatedTo) - 1;
 
         // Not possible to switch from `or` to `and` if there are multiple criteria
@@ -1116,7 +1178,8 @@ class ElementQuery extends Query implements ElementQueryInterface
 
         $relatedTo[0] = $criteriaCount > 0 ? 'and' : 'or';
         $relatedTo[] = ElementRelationParamParser::normalizeRelatedToCriteria($value);
-        return $this->relatedTo($relatedTo);
+
+        return $relatedTo;
     }
 
     /**
@@ -1642,10 +1705,19 @@ class ElementQuery extends Query implements ElementQueryInterface
                 } else {
                     $this->_columnMap[$field->handle] = $valueSql;
                 }
+
+                // when preparing the query, we sometimes need to prep custom values some more
+                $dbType = $field::dbType();
+                // for mysql, we have to make sure text column type is cast to char, otherwise it won't be sorted correctly
+                // see https://github.com/craftcms/cms/issues/15609
+                if ($db->getIsMysql() && is_string($dbType) && Db::parseColumnType($dbType) === Schema::TYPE_TEXT) {
+                    $this->_columnsToCast[$field->handle] = 'CHAR(255)';
+                }
             }
         }
 
         $this->_applyRelatedToParam();
+        $this->_applyNotRelatedToParam();
         $this->_applyStructureParams($class);
         $this->_applyRevisionParams();
         $this->_applySearchParam();
@@ -1696,8 +1768,11 @@ class ElementQuery extends Query implements ElementQueryInterface
         // Should we set a search score on the elements?
         if (isset($this->_searchResults)) {
             foreach ($rows as &$row) {
-                if (isset($row['id'], $this->_searchResults[$row['id']])) {
-                    $row['searchScore'] = (int)round($this->_searchResults[$row['id']]);
+                if (isset($row['id'], $row['siteId'])) {
+                    $key = sprintf('%s-%s', $row['id'], $row['siteId']);
+                    if (isset($this->_searchResults[$key])) {
+                        $row['searchScore'] = (int)round($this->_searchResults[$key]);
+                    }
                 }
             }
         }
@@ -1793,14 +1868,7 @@ class ElementQuery extends Query implements ElementQueryInterface
             return null;
         }
 
-        if (isset($this->eagerLoadAlias)) {
-            $alias = $this->eagerLoadAlias;
-        } else {
-            $alias = $this->eagerLoadHandle;
-            if (str_contains($alias, ':')) {
-                $alias = explode(':', $alias, 2)[1];
-            }
-        }
+        $alias = $this->eagerLoadAlias ?? "eagerly:$this->eagerLoadHandle";
 
         // see if it was already eager-loaded
         $eagerLoaded = match ($count) {
@@ -1887,13 +1955,34 @@ class ElementQuery extends Query implements ElementQueryInterface
         if ($cachedResult !== null) {
             return !empty($cachedResult);
         }
-        try {
-            return $this->prepareSubquery()
-                ->select('elements.id')
-                ->exists($db);
-        } catch (QueryAbortedException) {
-            return false;
+
+        if (
+            !$this->distinct
+            && empty($this->groupBy)
+            && empty($this->having)
+            && empty($this->union)
+        ) {
+            try {
+                $subquery = $this->prepareSubquery();
+
+                // If distinct, et al. were set by prepare(), don't mess with it
+                // see https://github.com/craftcms/cms/issues/15001#issuecomment-2174563927
+                if (
+                    !$subquery->distinct
+                    && empty($subquery->groupBy)
+                    && empty($subquery->having)
+                    && empty($subquery->union)
+                ) {
+                    return $subquery
+                        ->select('elements.id')
+                        ->exists($db);
+                }
+            } catch (QueryAbortedException) {
+                return false;
+            }
         }
+
+        return parent::exists($db);
     }
 
     /**
@@ -1986,7 +2075,7 @@ class ElementQuery extends Query implements ElementQueryInterface
     }
 
     /**
-     * Clears the [cached result](https://craftcms.com/docs/4.x/element-queries.html#cache).
+     * Clears the [cached result](https://craftcms.com/docs/5.x/development/element-queries.html#cache).
      *
      * @see getCachedResult()
      * @see setCachedResult()
@@ -2174,10 +2263,10 @@ class ElementQuery extends Query implements ElementQueryInterface
         $vars = array_keys(Craft::getObjectVars($this));
         $behavior = $this->getBehavior('customFields');
         $behaviorVars = array_keys(Craft::getObjectVars($behavior));
-        $fields = array_merge(
-            array_combine($vars, $vars),
-            array_combine($behaviorVars, array_map(fn(string $var) => fn() => $behavior->$var, $behaviorVars))
-        );
+        // if using an array_merge here, reverse the order so that the $behaviorVars go before $vars;
+        // the properties ($var) have to take priority over custom fields ($behaviorVars);
+        $fields = array_combine($vars, $vars) +
+            array_combine($behaviorVars, array_map(fn(string $var) => fn() => $behavior->$var, $behaviorVars));
         unset($fields['query'], $fields['subQuery'], $fields['owner']);
         return $fields;
     }
@@ -2702,6 +2791,38 @@ class ElementQuery extends Query implements ElementQueryInterface
     }
 
     /**
+     * Applies the 'notRelatedTo' param to the query being prepared.
+     *
+     * @throws QueryAbortedException
+     */
+    private function _applyNotRelatedToParam(): void
+    {
+        if (!$this->notRelatedTo) {
+            return;
+        }
+
+        $notRelatedToParam = $this->notRelatedTo;
+
+        $parser = new ElementRelationParamParser([
+            'fields' => $this->customFields ? ArrayHelper::index(
+                $this->customFields,
+                fn(FieldInterface $field) => $field->layoutElement?->getOriginalHandle() ?? $field->handle,
+            ) : [],
+        ]);
+        $condition = $parser->parse($notRelatedToParam, $this->siteId !== '*' ? $this->siteId : null);
+
+        if ($condition === false) {
+            // just don't modify the query
+            return;
+        }
+
+        // Prepend `not` as this is not expect to be provided
+        $condition = ['not', $condition];
+
+        $this->subQuery->andWhere($condition);
+    }
+
+    /**
      * Returns whether we should join structure data in the query.
      *
      * @return bool
@@ -3205,7 +3326,11 @@ class ElementQuery extends Query implements ElementQueryInterface
                     $params = [];
                     $orderByColumns[$pos] = (new CoalesceColumnsExpression($columnName))->getSql($params);
                 } else {
-                    $orderByColumns[$pos] = $columnName;
+                    if (isset($this->_columnsToCast[$orderValue])) {
+                        $orderByColumns[$pos] = "CAST($columnName AS {$this->_columnsToCast[$orderValue]})";
+                    } else {
+                        $orderByColumns[$pos] = $columnName;
+                    }
                 }
 
                 $orderBy = array_combine($orderByColumns, $orderBy);

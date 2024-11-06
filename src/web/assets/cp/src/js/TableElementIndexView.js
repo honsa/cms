@@ -78,6 +78,7 @@ Craft.TableElementIndexView = Craft.BaseElementIndexView.extend({
 
     if (
       this.elementIndex.isAdministrative &&
+      !this.elementIndex.settings.static &&
       this.elementIndex.settings.inlineEditable !== false &&
       this.$elementContainer.has('> tr[data-id] > th .element[data-editable]')
     ) {
@@ -92,12 +93,9 @@ Craft.TableElementIndexView = Craft.BaseElementIndexView.extend({
             `> tbody > tr[data-id="${ev.data.id}"]`
           );
           if ($rows.length) {
-            const data = {
-              elementType: this.elementIndex.elementType,
-              source: this.elementIndex.sourceKey,
+            const data = Object.assign(this.elementIndex.getViewParams(), {
               id: ev.data.id,
-              siteId: this.elementIndex.siteId,
-            };
+            });
             Craft.sendActionRequest(
               'POST',
               'element-indexes/element-table-html',
@@ -146,6 +144,8 @@ Craft.TableElementIndexView = Craft.BaseElementIndexView.extend({
 
       this.addListener(this.$saveBtn, 'activate', () => {
         this.$saveBtn.addClass('loading');
+        this.closeDateTimeFields();
+
         this.saveChanges()
           .then((data) => {
             if (data.errors) {
@@ -194,6 +194,8 @@ Craft.TableElementIndexView = Craft.BaseElementIndexView.extend({
         ) {
           this.$cancelBtn.addClass('loading');
           this.elementIndex.inlineEditing = false;
+          this.closeDateTimeFields();
+
           this.elementIndex.updateElements(true, false).then(() => {
             this.elementIndex.$elements.removeClass('inline-editing');
           });
@@ -229,6 +231,19 @@ Craft.TableElementIndexView = Craft.BaseElementIndexView.extend({
           this.elementIndex.$elements.addClass('inline-editing');
         });
       });
+    }
+  },
+
+  closeDateTimeFields: function () {
+    // ensure opened date/time pickers don't linger after activating the Cancel btn
+    this.elementIndex.$elements
+      .find('.datewrapper input')
+      .datepicker('destroy');
+
+    if ($().timepicker) {
+      this.elementIndex.$elements
+        .find('.timewrapper input')
+        .timepicker('remove');
     }
   },
 

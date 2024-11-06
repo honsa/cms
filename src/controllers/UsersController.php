@@ -98,6 +98,7 @@ class UsersController extends Controller
      *             ->one();
      *     }
      * );
+     * ```
      *
      * @since 4.2.0
      */
@@ -182,9 +183,6 @@ class UsersController extends Controller
      */
     public function beforeAction($action): bool
     {
-        if ($action->id === 'login-modal') {
-//            sleep(1);
-        }
         // Don't enable CSRF validation for login requests if the user is already logged-in.
         // (Guards against double-clicking a Login button.)
         if ($action->id === 'login' && !Craft::$app->getUser()->getIsGuest()) {
@@ -595,7 +593,9 @@ class UsersController extends Controller
 
             if (!$loginName) {
                 // If they didn't even enter a username/email, just bail now.
-                $errors[] = Craft::t('app', 'Username or email is required.');
+                $errors[] = Craft::$app->getConfig()->getGeneral()->useEmailAsUsername
+                    ? Craft::t('app', 'Email is required.')
+                    : Craft::t('app', 'Username or email is required.');
 
                 return $this->_handleSendPasswordResetError($errors);
             }
@@ -603,7 +603,9 @@ class UsersController extends Controller
             $user = Craft::$app->getUsers()->getUserByUsernameOrEmail($loginName);
 
             if (!$user || !$user->getIsCredentialed()) {
-                $errors[] = Craft::t('app', 'Invalid username or email.');
+                $errors[] = Craft::$app->getConfig()->getGeneral()->useEmailAsUsername
+                    ? Craft::t('app', 'Invalid email.')
+                    : Craft::t('app', 'Invalid username or email.');
             }
         }
 
@@ -826,15 +828,15 @@ class UsersController extends Controller
 
         // Can they access the control panel?
         if ($user->can('accessCp')) {
-            // Send them to the control panel login page
+            // Send them to the control panel login page by default
             $url = UrlHelper::cpUrl(Request::CP_PATH_LOGIN);
         } else {
-            // Send them to the 'setPasswordSuccessPath'.
+            // Send them to the 'setPasswordSuccessPath' by default
             $setPasswordSuccessPath = Craft::$app->getConfig()->getGeneral()->getSetPasswordSuccessPath();
             $url = UrlHelper::siteUrl($setPasswordSuccessPath);
         }
 
-        return $this->redirect($url);
+        return $this->redirectToPostedUrl($user, $url);
     }
 
     /**
@@ -956,6 +958,25 @@ class UsersController extends Controller
     }
 
     /**
+     * User index
+     *
+     * @param string|null $source
+     * @return Response
+     * @since 5.3.0
+     */
+    public function actionIndex(?string $source = null): Response
+    {
+        $this->requirePermission('editUsers');
+        return $this->renderTemplate('users/_index.twig', [
+            'title' => Craft::t('app', 'Users'),
+            'buttonLabel' => Craft::t('app', 'New {type}', [
+                'type' => User::lowerDisplayName(),
+            ]),
+            'source' => $source,
+        ]);
+    }
+
+    /**
      * Creates a new unpublished draft of a user and redirects to its edit page.
      *
      * @return Response
@@ -1015,6 +1036,12 @@ class UsersController extends Controller
             'element' => $element,
         ]);
 
+        if ($element->getIsUnpublishedDraft() && $this->showPermissionsScreen()) {
+            $this->response
+                ->submitButtonLabel(Craft::t('app', 'Create and set permissions'))
+                ->redirectUrl($this->editUserScreenUrl($element, self::SCREEN_PERMISSIONS));
+        }
+
         return $this->asEditUserScreen($element, self::SCREEN_PROFILE);
     }
 
@@ -1071,6 +1098,18 @@ class UsersController extends Controller
             'currentGroupIds' => array_map(fn(UserGroup $group) => $group->id, $user->getGroups()),
         ]);
 
+        if (!$user->getIsCredentialed() && $user->username && static::currentUser()->can('administrateUsers')) {
+            $response->additionalButtonsHtml(
+                Html::button(Craft::t('app', 'Save and send activation email'), [
+                    'class' => ['btn', 'secondary', 'formsubmit'],
+                    'data' => [
+                        'param' => 'sendActivationEmail',
+                        'value' => '1',
+                    ],
+                ])
+            );
+        }
+
         return $response;
     }
 
@@ -1100,7 +1139,7 @@ class UsersController extends Controller
             }
         }
 
-        if (Craft::$app->edition === CmsEdition::Pro) {
+        if (Craft::$app->edition->value >= CmsEdition::Pro->value) {
             // Fire an 'beforeAssignGroupsAndPermissions' event
             if ($this->hasEventHandlers(self::EVENT_BEFORE_ASSIGN_GROUPS_AND_PERMISSIONS)) {
                 $this->trigger(self::EVENT_BEFORE_ASSIGN_GROUPS_AND_PERMISSIONS, new UserEvent([
@@ -1116,6 +1155,22 @@ class UsersController extends Controller
             if ($this->hasEventHandlers(self::EVENT_AFTER_ASSIGN_GROUPS_AND_PERMISSIONS)) {
                 $this->trigger(self::EVENT_AFTER_ASSIGN_GROUPS_AND_PERMISSIONS, new UserEvent([
                     'user' => $user,
+                ]));
+            }
+        }
+
+        if (
+            !$user->getIsCredentialed() &&
+            $currentUser->can('administrateUsers') &&
+            $this->request->getBodyParam('sendActivationEmail')
+        ) {
+            try {
+                if (!Craft::$app->getUsers()->sendActivationEmail($user)) {
+                    $this->setFailFlash(Craft::t('app', 'Couldn’t send activation email. Check your email settings.'));
+                }
+            } catch (InvalidElementException $e) {
+                $this->setFailFlash(Craft::t('app', 'Couldn’t send the activation email: {error}', [
+                    'error' => $e->getMessage(),
                 ]));
             }
         }
@@ -1335,7 +1390,7 @@ JS);
         $generalConfig = Craft::$app->getConfig()->getGeneral();
         $userSettings = Craft::$app->getProjectConfig()->get('users') ?? [];
         $requireEmailVerification = (
-            Craft::$app->edition === CmsEdition::Pro &&
+            Craft::$app->edition->value >= CmsEdition::Pro->value &&
             ($userSettings['requireEmailVerification'] ?? true)
         );
         $deactivateByDefault = $userSettings['deactivateByDefault'] ?? false;
@@ -1578,7 +1633,7 @@ JS);
         // Save the user’s photo, if it was submitted
         $this->_processUserPhoto($user);
 
-        if (Craft::$app->edition === CmsEdition::Pro) {
+        if (Craft::$app->edition->value >= CmsEdition::Pro->value) {
             // If this is public registration, assign the user to the default user group
             if ($isPublicRegistration) {
                 // Assign them to the default user group
@@ -2107,9 +2162,11 @@ JS);
         // All safe attributes
         $safeAttributes = [];
         foreach ($address->safeAttributes() as $name) {
-            $value = $this->request->getBodyParam($name);
-            if ($value !== null) {
-                $safeAttributes[$name] = $value;
+            if (!in_array($name, ['id', 'uid', 'ownerId'])) {
+                $value = $this->request->getBodyParam($name);
+                if ($value !== null) {
+                    $safeAttributes[$name] = $value;
+                }
             }
         }
         $address->setAttributes($safeAttributes);
@@ -2765,7 +2822,7 @@ JS);
     {
         $view = $this->getView();
         $templateMode = $view->getTemplateMode();
-        if ($templateMode === View::TEMPLATE_MODE_SITE && !$view->doesTemplateExist('users/_photo')) {
+        if ($templateMode === View::TEMPLATE_MODE_SITE && !$view->doesTemplateExist('users/_photo.twig')) {
             $templateMode = View::TEMPLATE_MODE_CP;
         }
 
@@ -2776,7 +2833,7 @@ JS);
             'photoId' => $user->photoId,
         ];
 
-        if ($user->getIsCurrent()) {
+        if ($user->getIsCurrent() && $this->request->getIsCpRequest()) {
             $data['headerPhotoHtml'] = $view->renderTemplate('_layouts/components/header-photo.twig');
         }
 
