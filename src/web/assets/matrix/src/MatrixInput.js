@@ -1,5 +1,3 @@
-import $ from 'jquery';
-
 (function ($) {
   /** global: Craft */
   /** global: Garnish */
@@ -117,6 +115,7 @@ import $ from 'jquery';
 
         this.addListener(this.$addEntryBtn, 'activate', async function () {
           this.$addEntryBtn.addClass('loading');
+          Craft.cp.announce(Craft.t('app', 'Loading'));
           try {
             await this.addEntry(this.$addEntryBtn.data('type'));
           } finally {
@@ -131,6 +130,7 @@ import $ from 'jquery';
             .$container.find('button')
             .on('activate', async (ev) => {
               this.$addEntryMenuBtn.addClass('loading');
+              Craft.cp.announce(Craft.t('app', 'Loading'));
               try {
                 await this.addEntry($(ev.currentTarget).data('type'));
               } finally {
@@ -156,6 +156,14 @@ import $ from 'jquery';
 
           this.trigger('afterInit');
         }, 100);
+
+        // If this field is nested within something that's deletable, be ready to handle that
+        this.$container.closest('.js-deletable').on('delete', (ev) => {
+          // Ignore delete events that came from nested elements
+          if (ev.target === ev.currentTarget) {
+            this.destroy();
+          }
+        });
       },
 
       canAddMoreEntries: function () {
@@ -220,17 +228,10 @@ import $ from 'jquery';
       },
 
       async addEntry(type, $insertBefore, autofocus) {
-        if (this.addingEntry) {
-          // only one new entry at a time
-          return;
-        }
-
         if (!this.canAddMoreEntries()) {
           this.updateStatusMessage();
           return;
         }
-
-        this.addingEntry = true;
 
         if (this.elementEditor) {
           // First ensure we're working with drafts for all elements leading up
@@ -241,69 +242,84 @@ import $ from 'jquery';
           );
         }
 
-        const {data} = await Craft.sendActionRequest(
-          'POST',
-          'matrix/create-entry',
-          {
-            data: {
-              fieldId: this.settings.fieldId,
-              entryTypeId: this.entryTypesByHandle[type].id,
-              ownerId: this.settings.ownerId,
-              ownerElementType: this.settings.ownerElementType,
-              siteId: this.settings.siteId,
-              namespace: this.settings.namespace,
-              staticEntries: this.settings.staticEntries,
+        await Craft.queue.push(async () => {
+          if (this.addingEntry) {
+            // only one new entry at a time
+            return;
+          }
+
+          this.addingEntry = true;
+
+          const {data} = await Craft.sendActionRequest(
+            'POST',
+            'matrix/create-entry',
+            {
+              data: {
+                fieldId: this.settings.fieldId,
+                entryTypeId: this.entryTypesByHandle[type].id,
+                ownerId: this.settings.ownerId,
+                ownerElementType: this.settings.ownerElementType,
+                siteId: this.settings.siteId,
+                namespace: this.settings.namespace,
+                staticEntries: this.settings.staticEntries,
+              },
+            }
+          );
+
+          const $entry = $(data.blockHtml);
+
+          // Pause the element editor
+          await this.elementEditor?.pause();
+
+          if ($insertBefore) {
+            $entry.insertBefore($insertBefore);
+          } else {
+            $entry.appendTo(this.$entriesContainer);
+          }
+
+          this.trigger('entryAdded', {
+            $entry: $entry,
+          });
+
+          // Animate the entry into position
+          $entry.css(this.getHiddenEntryCss($entry)).velocity(
+            {
+              opacity: 1,
+              'margin-bottom': 10,
             },
-          }
-        );
+            'fast',
+            async () => {
+              $entry.css('margin-bottom', '');
+              // Execute the response JS first so any Selectize inputs, etc.,
+              // get instantiated before field toggles
+              await Craft.appendHeadHtml(data.headHtml);
+              await Craft.appendBodyHtml(data.bodyHtml);
+              Craft.initUiElements($entry.children('.fields'));
+              new Craft.MatrixInput.Entry(this, $entry);
+              this.entrySort.addItems($entry);
+              this.entrySelect.addItems($entry);
+              this.updateAddEntryBtn();
 
-        const $entry = $(data.blockHtml);
+              Garnish.requestAnimationFrame(() => {
+                if (typeof autofocus === 'undefined' || autofocus) {
+                  // Scroll to the entry
+                  Garnish.scrollContainerToElement($entry);
+                  // Focus on the first focusable element
+                  $entry
+                    .find('.flex-fields :focusable')
+                    .not('.prevent-autofocus')
+                    .first()
+                    .focus();
+                }
 
-        // Pause the element editor
-        this.elementEditor?.pause();
+                // Resume the element editor
+                this.elementEditor?.resume();
+              });
+            }
+          );
 
-        if ($insertBefore) {
-          $entry.insertBefore($insertBefore);
-        } else {
-          $entry.appendTo(this.$entriesContainer);
-        }
-
-        this.trigger('entryAdded', {
-          $entry: $entry,
+          this.addingEntry = false;
         });
-
-        // Animate the entry into position
-        $entry.css(this.getHiddenEntryCss($entry)).velocity(
-          {
-            opacity: 1,
-            'margin-bottom': 10,
-          },
-          'fast',
-          async () => {
-            $entry.css('margin-bottom', '');
-            Craft.initUiElements($entry.children('.fields'));
-            await Craft.appendHeadHtml(data.headHtml);
-            await Craft.appendBodyHtml(data.bodyHtml);
-            new Craft.MatrixInput.Entry(this, $entry);
-            this.entrySort.addItems($entry);
-            this.entrySelect.addItems($entry);
-            this.updateAddEntryBtn();
-
-            Garnish.requestAnimationFrame(() => {
-              if (typeof autofocus === 'undefined' || autofocus) {
-                // Scroll to the entry
-                Garnish.scrollContainerToElement($entry);
-                // Focus on the first focusable element
-                $entry.find('.flex-fields :focusable').first().focus();
-              }
-
-              // Resume the element editor
-              this.elementEditor?.resume();
-            });
-          }
-        );
-
-        this.addingEntry = false;
       },
 
       getEntryTypeByHandle: function (handle) {
@@ -349,6 +365,19 @@ import $ from 'jquery';
 
       get maxEntries() {
         return this.settings.maxEntries;
+      },
+
+      destroy: function () {
+        this.entrySort?.destroy();
+        this.entrySelect?.destroy();
+        delete this.entrySort;
+        delete this.entrySelect;
+
+        this.$entriesContainer.children('.matrixblock').each((i, container) => {
+          $(container).data('entry')?.destroy();
+        });
+
+        this.base();
       },
     },
     {
@@ -919,10 +948,12 @@ import $ from 'jquery';
         }
       }
 
-      this.actionDisclosure.hide();
+      this.actionDisclosure?.hide();
     },
 
     selfDestruct: function () {
+      this.destroy();
+
       // Remove any inputs from the form data
       $('[name]', this.$container).removeAttr('name');
 
@@ -1147,6 +1178,22 @@ import $ from 'jquery';
 
       // re-grab dismissible tips, re-attach listener, hide on re-load
       this.matrix.elementEditor?.handleDismissibleTips();
+    },
+
+    destroy: function () {
+      this.actionDisclosure?.hide();
+
+      this.tabManager?.destroy();
+      this.actionDisclosure?.destroy();
+      this.formObserver?.destroy();
+      delete this.tabManager;
+      delete this.actionDisclosure;
+      delete this.formObserver;
+
+      // alert any nested inputs that we're getting deleted
+      this.$container.trigger('delete');
+
+      this.base();
     },
   });
 })(jQuery);

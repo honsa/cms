@@ -15,6 +15,7 @@ use craft\behaviors\RevisionBehavior;
 use craft\db\CoalesceColumnsExpression;
 use craft\db\Command;
 use craft\db\Connection;
+use craft\db\ExcludeDescendantIdsExpression;
 use craft\db\Query;
 use craft\db\Table;
 use craft\elements\actions\Delete;
@@ -37,6 +38,7 @@ use craft\enums\AttributeStatus;
 use craft\enums\Color;
 use craft\errors\InvalidFieldException;
 use craft\events\AuthorizationCheckEvent;
+use craft\events\DefineAltActionsEvent;
 use craft\events\DefineAttributeHtmlEvent;
 use craft\events\DefineAttributeKeywordsEvent;
 use craft\events\DefineEagerLoadingMapEvent;
@@ -49,6 +51,8 @@ use craft\events\ElementIndexTableAttributeEvent;
 use craft\events\ElementStructureEvent;
 use craft\events\ModelEvent;
 use craft\events\RegisterElementActionsEvent;
+use craft\events\RegisterElementCardAttributesEvent;
+use craft\events\RegisterElementDefaultCardAttributesEvent;
 use craft\events\RegisterElementDefaultTableAttributesEvent;
 use craft\events\RegisterElementExportersEvent;
 use craft\events\RegisterElementFieldLayoutsEvent;
@@ -277,6 +281,19 @@ abstract class Element extends Component implements ElementInterface
      */
     public const EVENT_PREP_QUERY_FOR_TABLE_ATTRIBUTE = 'prepQueryForTableAttribute';
 
+
+    /**
+     * @event RegisterElementCardAttributesEvent The event that is triggered when registering the card attributes for the element type.
+     * @since 5.5.0
+     */
+    public const EVENT_REGISTER_CARD_ATTRIBUTES = 'registerCardAttributes';
+
+    /**
+     * @event RegisterElementCardAttributesEvent The event that is triggered when registering the card attributes for the element type.
+     * @since 5.5.0
+     */
+    public const EVENT_REGISTER_DEFAULT_CARD_ATTRIBUTES = 'registerDefaultCardAttributes';
+
     /**
      * @event DefineEagerLoadingMapEvent The event that is triggered when defining an eager-loading map.
      *
@@ -352,6 +369,13 @@ abstract class Element extends Component implements ElementInterface
      * @since 4.0.0
      */
     public const EVENT_DEFINE_ADDITIONAL_BUTTONS = 'defineAdditionalButtons';
+
+    /**
+     * @event DefineAltActionsEvent The event that is triggered when defining alternative form actions for the element.
+     * @see getAltActions()
+     * @since 5.6.0
+     */
+    public const EVENT_DEFINE_ALT_ACTIONS = 'defineAltActions';
 
     /**
      * @event DefineMenuItemsEvent The event that is triggered when defining action menu items..
@@ -1039,9 +1063,9 @@ abstract class Element extends Component implements ElementInterface
         if (!$hasActionType(Edit::class)) {
             $actions->prepend([
                 'type' => Edit::class,
-                'label' => Craft::t('app', 'Edit {type}', [
+                'label' => StringHelper::upperCaseFirst(Craft::t('app', 'Edit {type}', [
                     'type' => static::lowerDisplayName(),
-                ]),
+                ])),
             ]);
         }
 
@@ -1049,9 +1073,9 @@ abstract class Element extends Component implements ElementInterface
         if (static::hasUris() && !$hasActionType(ViewAction::class)) {
             $actions->prepend([
                 'type' => ViewAction::class,
-                'label' => Craft::t('app', 'View {type}', [
+                'label' => StringHelper::upperCaseFirst(Craft::t('app', 'View {type}', [
                     'type' => static::lowerDisplayName(),
-                ]),
+                ])),
             ]);
         }
 
@@ -1196,6 +1220,7 @@ abstract class Element extends Component implements ElementInterface
             'inlineEditing' => $viewState['inlineEditing'] ?? false,
             'nestedInputNamespace' => $viewState['nestedInputNamespace'] ?? null,
             'tableName' => static::pluralDisplayName(),
+            'elementQuery' => self::elemnetQueryWithAllDescendants($elementQuery),
         ];
 
         $db = Craft::$app->getDb();
@@ -1289,10 +1314,32 @@ abstract class Element extends Component implements ElementInterface
             }
         }
 
+        foreach ($elements as $element) {
+            $element->viewMode = $viewState['mode'];
+        }
+
         $variables['elements'] = $elements;
         $template = '_elements/' . $viewState['mode'] . 'view/' . ($includeContainer ? 'container' : 'elements');
 
         return Craft::$app->getView()->renderTemplate($template, $variables);
+    }
+
+    private static function elemnetQueryWithAllDescendants(ElementQueryInterface $elementQuery): ElementQueryInterface
+    {
+        if (is_array($elementQuery->where)) {
+            foreach ($elementQuery->where as $key => $condition) {
+                if ($condition instanceof ExcludeDescendantIdsExpression) {
+                    $elementQuery = clone $elementQuery;
+                    unset($elementQuery->where[$key]);
+                    break;
+                }
+            }
+        } elseif ($elementQuery->where instanceof ExcludeDescendantIdsExpression) {
+            $elementQuery = clone $elementQuery;
+            $elementQuery->where = null;
+        }
+
+        return $elementQuery;
     }
 
     /**
@@ -1354,9 +1401,52 @@ abstract class Element extends Component implements ElementInterface
     /**
      * @inheritdoc
      */
+    public static function indexViewModes(): array
+    {
+        $viewModes = [
+            [
+                'mode' => 'structure',
+                'title' => Craft::t('app', 'Display in a structured table'),
+                'icon' => Craft::$app->getLocale()->getOrientation() === 'rtl' ? 'structurertl' : 'structure',
+                'structuresOnly' => true,
+            ],
+            [
+                'mode' => 'table',
+                'title' => Craft::t('app', 'Display in a table'),
+                'icon' => 'list',
+                'availableOnMobile' => false,
+            ],
+        ];
+
+        if (static::hasThumbs()) {
+            $viewModes[] = [
+                'mode' => 'thumbs',
+                'title' => Craft::t('app', 'Display as thumbnails'),
+                'icon' => 'grid',
+            ];
+        }
+
+        $viewModes[] = [
+            'mode' => 'cards',
+            'title' => Craft::t('app', 'Display as cards'),
+            'icon' => 'element-cards',
+        ];
+
+        return $viewModes;
+    }
+
+    /**
+     * @inheritdoc
+     */
     public static function sortOptions(): array
     {
         $sortOptions = static::defineSortOptions();
+
+        // Make sure ID is listed first
+        $sortOptions = [
+            'id' => Craft::t('app', 'ID'),
+            ...ArrayHelper::without($sortOptions, 'id'),
+        ];
 
         // Fire a 'registerSortOptions' event
         if (Event::hasHandlers(static::class, self::EVENT_REGISTER_SORT_OPTIONS)) {
@@ -1470,6 +1560,119 @@ abstract class Element extends Component implements ElementInterface
         return array_keys($availableTableAttributes);
     }
 
+    /**
+     * @inheritdoc
+     */
+    public static function cardAttributes(): array
+    {
+        $cardAttributes = static::defineCardAttributes();
+
+        // Fire a 'registerCardAttributes' event
+        if (Event::hasHandlers(static::class, self::EVENT_REGISTER_CARD_ATTRIBUTES)) {
+            $event = new RegisterElementCardAttributesEvent(['cardAttributes' => $cardAttributes]);
+            Event::trigger(static::class, self::EVENT_REGISTER_CARD_ATTRIBUTES, $event);
+            return $event->cardAttributes;
+        }
+
+        return $cardAttributes;
+    }
+
+    /**
+     * Defines all the available attributes that can be shown in card views along with their default placeholder values.
+     *
+     * @return array The card attributes.
+     * @see cardAttributes()
+     * @since 5.5.0
+     */
+    protected static function defineCardAttributes(): array
+    {
+        // we're intentionally not including statuses as those already show in cards
+        $attributes = [
+            'dateCreated' => [
+                'label' => Craft::t('app', 'Date Created'),
+                'placeholder' => fn() => (new \DateTime())->sub(new \DateInterval('P16D')),
+            ],
+            'dateUpdated' => [
+                'label' => Craft::t('app', 'Date Updated'),
+                'placeholder' => fn() => (new \DateTime())->sub(new \DateInterval('P15D')),
+            ],
+            'id' => [
+                'label' => Craft::t('app', 'ID'),
+                'placeholder' => fn() => 4321,
+            ],
+            'uid' => [
+                'label' => Craft::t('app', 'UID'),
+                'placeholder' => fn() => 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
+            ],
+        ];
+
+        if (static::hasUris()) {
+            $attributes = array_merge($attributes, [
+                'link' => [
+                    'label' => Craft::t('app', 'Link'),
+                    'icon' => 'world',
+                    'placeholder' => fn() => ElementHelper::linkAttributeHtml('#'),
+                ],
+                'slug' => [
+                    'label' => Craft::t('app', 'Slug'),
+                    'placeholder' => fn() => Craft::t('app', 'Slug'),
+                ],
+                'uri' => [
+                    'label' => Craft::t('app', 'URI'),
+                    'placeholder' => fn() => ElementHelper::uriAttributeHtml(Craft::t('app', 'link/to/something'), '#'),
+                ],
+            ]);
+        }
+
+        return $attributes;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public static function attributePreviewHtml(array $attribute): mixed
+    {
+        return match ($attribute['value']) {
+            'link', 'uri' => $attribute['placeholder'],
+            default => ElementHelper::attributeHtml(is_callable($attribute['placeholder'] ?? null)
+                ? $attribute['placeholder']()
+                : $attribute['placeholder'] ?? $attribute['label']
+            ),
+        };
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public static function defaultCardAttributes(): array
+    {
+        $cardAttributes = static::defineDefaultCardAttributes();
+
+        // Fire a 'registerDefaultCardAttributes' event
+        if (Event::hasHandlers(static::class, self::EVENT_REGISTER_DEFAULT_CARD_ATTRIBUTES)) {
+            $event = new RegisterElementDefaultCardAttributesEvent([
+                'cardAttributes' => $cardAttributes,
+            ]);
+            Event::trigger(static::class, self::EVENT_REGISTER_DEFAULT_CARD_ATTRIBUTES, $event);
+            return $event->cardAttributes;
+        }
+
+        return $cardAttributes;
+    }
+
+    /**
+     * Returns the list of card attribute keys that should be shown by default.
+     *
+     * @return string[] The card attributes.
+     * @see defaultCardAttributes()
+     * @see cardAttributes()
+     * @since 5.5.0
+     */
+    protected static function defineDefaultCardAttributes(): array
+    {
+        return [];
+    }
+
     // Methods for customizing element queries
     // -------------------------------------------------------------------------
 
@@ -1564,21 +1767,7 @@ abstract class Element extends Component implements ElementInterface
      */
     private static function _mapDescendants(array $sourceElements, bool $children): ?array
     {
-        // Get the source element IDs
-        $sourceElementIds = array_map(fn(ElementInterface $element) => $element->id, $sourceElements);
-
-        // Get the structure data for these elements
-        $selectColumns = ['structureId', 'elementId', 'lft', 'rgt'];
-
-        if ($children) {
-            $selectColumns[] = 'level';
-        }
-
-        $elementStructureData = (new Query())
-            ->select($selectColumns)
-            ->from([Table::STRUCTUREELEMENTS])
-            ->where(['elementId' => $sourceElementIds])
-            ->all();
+        $elementStructureData = self::_structureDataForElements($sourceElements, $children);
 
         if (empty($elementStructureData)) {
             return null;
@@ -1620,7 +1809,7 @@ abstract class Element extends Component implements ElementInterface
         foreach ($elementStructureData as $elementStructureDatum) {
             foreach ($descendantStructureData as $descendantStructureDatum) {
                 if (
-                    $descendantStructureDatum['structureId'] === $elementStructureDatum['structureId'] &&
+                    $descendantStructureDatum['structureId'] == $elementStructureDatum['structureId'] &&
                     $descendantStructureDatum['lft'] > $elementStructureDatum['lft'] &&
                     $descendantStructureDatum['rgt'] < $elementStructureDatum['rgt'] &&
                     (!$children || $descendantStructureDatum['level'] == $elementStructureDatum['level'] + 1)
@@ -1650,21 +1839,7 @@ abstract class Element extends Component implements ElementInterface
      */
     private static function _mapAncestors(array $sourceElements, bool $parents): ?array
     {
-        // Get the source element IDs
-        $sourceElementIds = array_map(fn(ElementInterface $element) => $element->id, $sourceElements);
-
-        // Get the structure data for these elements
-        $selectColumns = ['structureId', 'elementId', 'lft', 'rgt'];
-
-        if ($parents) {
-            $selectColumns[] = 'level';
-        }
-
-        $elementStructureData = (new Query())
-            ->select($selectColumns)
-            ->from([Table::STRUCTUREELEMENTS])
-            ->where(['elementId' => $sourceElementIds])
-            ->all();
+        $elementStructureData = self::_structureDataForElements($sourceElements, $parents);
 
         if (empty($elementStructureData)) {
             return null;
@@ -1730,6 +1905,47 @@ abstract class Element extends Component implements ElementInterface
             'elementType' => static::class,
             'map' => $map,
         ];
+    }
+
+    /**
+     * @param ElementInterface[] $elements
+     * @return array
+     */
+    private static function _structureDataForElements(array $elements, bool $withLevel): array
+    {
+        $data = [];
+        $fetchDataForIds = [];
+
+        foreach ($elements as $element) {
+            if (isset($element->structureId, $element->lft, $element->rgt, $element->level)) {
+                $data[] = [
+                    'structureId' => $element->structureId,
+                    'elementId' => $element->id,
+                    'lft' => $element->lft,
+                    'rgt' => $element->rgt,
+                    'level' => $element->level,
+                ];
+            } else {
+                $fetchDataForIds[] = $element->id;
+            }
+        }
+
+        if (!empty($fetchDataForIds)) {
+            // Get the structure data for these elements
+            $selectColumns = ['structureId', 'elementId', 'lft', 'rgt'];
+
+            if ($withLevel) {
+                $selectColumns[] = 'level';
+            }
+
+            array_push($data, ...(new Query())
+                ->select($selectColumns)
+                ->from([Table::STRUCTUREELEMENTS])
+                ->where(['elementId' => $fetchDataForIds])
+                ->all());
+        }
+
+        return $data;
     }
 
     /**
@@ -2095,11 +2311,6 @@ abstract class Element extends Component implements ElementInterface
     private bool $_initialized = false;
 
     /**
-     * @var FieldInterface[]|null[]
-     */
-    private array $_fieldsByHandle = [];
-
-    /**
      * @var string|null
      */
     private ?string $_fieldParamNamePrefix = null;
@@ -2245,6 +2456,12 @@ abstract class Element extends Component implements ElementInterface
      * @see toArray()
      */
     private $_serializeFields = false;
+
+    /**
+     * @var bool
+     * @see getIsCrossSiteCopyable()
+     */
+    private bool $_isCrossSiteCopyable;
 
     /**
      * @inheritdoc
@@ -2445,6 +2662,7 @@ abstract class Element extends Component implements ElementInterface
             $names['searchScore'],
             $names['updateSearchIndexForOwner'],
             $names['updatingFromDerivative'],
+            $names['viewMode'],
         );
 
         $names['canonicalId'] = true;
@@ -2607,18 +2825,12 @@ abstract class Element extends Component implements ElementInterface
         $rules[] = [['dateCreated', 'dateUpdated'], DateTimeValidator::class, 'on' => [self::SCENARIO_DEFAULT, self::SCENARIO_LIVE]];
         $rules[] = [['isFresh'], BooleanValidator::class];
 
-        $rules[] = [
-            ['title'],
-            'trim',
-            'on' => [self::SCENARIO_DEFAULT, self::SCENARIO_LIVE],
-            'when' => fn() => $this->shouldValidateTitle(),
-        ];
+        $rules[] = [['title'], 'trim'];
         $rules[] = [
             ['title'],
             StringValidator::class,
             'max' => 255,
             'disallowMb4' => true,
-            'on' => [self::SCENARIO_DEFAULT, self::SCENARIO_LIVE],
         ];
         $rules[] = [
             ['title'],
@@ -2895,8 +3107,7 @@ abstract class Element extends Component implements ElementInterface
 
             if ($this instanceof NestedElementInterface && $query instanceof NestedElementQueryInterface) {
                 $query
-                    ->fieldId($this->getField()?->id)
-                    ->ownerId($this->getOwnerId());
+                    ->fieldId($this->getField()?->id);
             }
 
             $this->$prop = $query->one();
@@ -3306,12 +3517,21 @@ abstract class Element extends Component implements ElementInterface
      */
     public function getCardBodyHtml(): ?string
     {
-        $previews = array_filter(array_map(
-            fn(BaseField $layoutElement) => $layoutElement->previewHtml($this),
-            $this->getFieldLayout()?->getCardBodyFields($this) ?? [],
-        ));
+        $this->viewMode = 'cards';
+        $html = '';
 
-        return implode("\n", array_map(fn(string $preview) => Html::tag('div', $preview), $previews));
+        foreach ($this->getFieldLayout()?->getCardBodyElements($this) ?? [] as $item) {
+            $itemHtml = $item instanceof BaseField
+                ? $item->previewHtml($this)
+                : $this->getAttributeHtml($item['value']);
+            if ($itemHtml !== '') {
+                $html .= Html::tag('div', $itemHtml, [
+                    'class' => 'card-attribute-preview',
+                ]);
+            }
+        }
+
+        return $html;
     }
 
     /**
@@ -3565,6 +3785,75 @@ abstract class Element extends Component implements ElementInterface
     /**
      * @inheritdoc
      */
+    public function getAltActions(): array
+    {
+        $isUnpublishedDraft = $this->getIsUnpublishedDraft();
+        $elementsService = Craft::$app->getElements();
+        $canSaveCanonical = $elementsService->canSaveCanonical($this);
+
+        $altActions = [
+            [
+                'label' => $isUnpublishedDraft && $canSaveCanonical
+                    ? Craft::t('app', 'Create and continue editing')
+                    : Craft::t('app', 'Save and continue editing'),
+                'redirect' => '{cpEditUrl}',
+                'shortcut' => true,
+                'retainScroll' => true,
+                'eventData' => ['autosave' => false],
+            ],
+        ];
+
+        if ($this->getIsCanonical() || $this->isProvisionalDraft) {
+            $newElement = $this->createAnother();
+            if ($newElement && $elementsService->canSave($newElement)) {
+                $altActions[] = [
+                    'label' => $isUnpublishedDraft && $canSaveCanonical
+                        ? Craft::t('app', 'Create and add another')
+                        : Craft::t('app', 'Save and add another'),
+                    'shortcut' => true,
+                    'shift' => true,
+                    'eventData' => ['autosave' => false],
+                    'params' => ['addAnother' => 1],
+                ];
+            }
+
+            if ($canSaveCanonical && $isUnpublishedDraft) {
+                $altActions[] = [
+                    'label' => StringHelper::upperCaseFirst(Craft::t('app', 'Save {type}', [
+                        'type' => Craft::t('app', 'draft'),
+                    ])),
+                    'action' => 'elements/save-draft',
+                    'redirect' => sprintf('%s#', ElementHelper::postEditUrl($this)),
+                    'eventData' => ['autosave' => false],
+                ];
+            }
+
+            if (!$this->getIsRevision() && $elementsService->canDuplicateAsDraft($this)) {
+                $altActions[] = [
+                    'label' => Craft::t('app', 'Save as a new {type}', [
+                        'type' => static::lowerDisplayName(),
+                    ]),
+                    'action' => 'elements/duplicate',
+                    'redirect' => '{cpEditUrl}',
+                ];
+            }
+        }
+
+        // Fire a 'defineAltActions' event
+        if ($this->hasEventHandlers(self::EVENT_DEFINE_ALT_ACTIONS)) {
+            $event = new DefineAltActionsEvent([
+                'altActions' => $altActions,
+            ]);
+            $this->trigger(self::EVENT_DEFINE_ALT_ACTIONS, $event);
+            return $event->altActions;
+        }
+
+        return $altActions;
+    }
+
+    /**
+     * @inheritdoc
+     */
     public function getActionMenuItems(): array
     {
         $items = [
@@ -3617,9 +3906,9 @@ abstract class Element extends Component implements ElementInterface
             $items[] = [
                 'id' => $editId,
                 'icon' => 'edit',
-                'label' => Craft::t('app', 'Edit {type}', [
+                'label' => StringHelper::upperCaseFirst(Craft::t('app', 'Edit {type}', [
                     'type' => static::lowerDisplayName(),
-                ]),
+                ])),
             ];
 
             $view = Craft::$app->getView();
@@ -3704,9 +3993,9 @@ JS, [
             if ($canDeleteForSite) {
                 $items[] = [
                     'icon' => 'remove',
-                    'label' => Craft::t('app', 'Delete {type} for this site', [
+                    'label' => StringHelper::upperCaseFirst(Craft::t('app', 'Delete {type} for this site', [
                         'type' => $isUnpublishedDraft ? Craft::t('app', 'draft') : static::lowerDisplayName(),
-                    ]),
+                    ])),
                     'action' => 'elements/delete-for-site',
                     'params' => [
                         'elementId' => $this->getCanonicalId(),
@@ -3724,9 +4013,9 @@ JS, [
             if ($canDeleteCanonical) {
                 $items[] = [
                     'icon' => 'trash',
-                    'label' => Craft::t('app', 'Delete {type}', [
+                    'label' => StringHelper::upperCaseFirst(Craft::t('app', 'Delete {type}', [
                         'type' => $isUnpublishedDraft ? Craft::t('app', 'draft') : static::lowerDisplayName(),
-                    ]),
+                    ])),
                     'action' => $isUnpublishedDraft ? 'elements/delete-draft' : 'elements/delete',
                     'params' => [
                         'elementId' => $this->getCanonicalId(),
@@ -3744,9 +4033,9 @@ JS, [
             if ($canDeleteForSite) {
                 $items[] = [
                     'icon' => 'remove',
-                    'label' => Craft::t('app', 'Delete {type} for this site', [
+                    'label' => StringHelper::upperCaseFirst(Craft::t('app', 'Delete {type} for this site', [
                         'type' => Craft::t('app', 'draft'),
-                    ]),
+                    ])),
                     'action' => 'elements/delete-for-site',
                     'params' => [
                         'elementId' => $this->getCanonicalId(),
@@ -3764,9 +4053,9 @@ JS, [
             // Delete draft
             $items[] = [
                 'icon' => 'trash',
-                'label' => Craft::t('app', 'Delete {type}', [
+                'label' => StringHelper::upperCaseFirst(Craft::t('app', 'Delete {type}', [
                     'type' => Craft::t('app', 'draft'),
-                ]),
+                ])),
                 'action' => 'elements/delete-draft',
                 'params' => [
                     'elementId' => $this->getCanonicalId(),
@@ -4532,7 +4821,7 @@ JS, [
      */
     private function _outdatedAttributes(): array
     {
-        if (!static::trackChanges() || $this->getIsCanonical()) {
+        if (!static::trackChanges() || $this->getIsCanonical() || $this->getIsRevision()) {
             return [];
         }
 
@@ -4806,7 +5095,7 @@ JS, [
      */
     private function _outdatedFields(): array
     {
-        if (!static::trackChanges() || !$this->getIsDraft() || $this->getIsCanonical()) {
+        if (!static::trackChanges() || $this->getIsCanonical() || $this->getIsRevision()) {
             return [];
         }
 
@@ -5222,6 +5511,24 @@ JS, [
         return $this->_currentRevision ?: null;
     }
 
+    /**
+     * @inheritdoc
+     */
+    public function getIsCrossSiteCopyable(): bool
+    {
+        if (!isset($this->_isCrossSiteCopyable)) {
+            $this->_isCrossSiteCopyable = (
+                Craft::$app->getIsMultiSite() &&
+                // check if user can edit this element in other sites
+                count(ElementHelper::editableSiteIdsForElement($this)) > 1 &&
+                // also check if the element exists in other sites
+                !empty(array_diff(array_keys(ElementHelper::siteStatusesForElement($this, true)), [$this->siteId]))
+            );
+        }
+
+        return $this->_isCrossSiteCopyable;
+    }
+
     // Indexes, etc.
     // -------------------------------------------------------------------------
 
@@ -5265,7 +5572,9 @@ JS, [
     {
         // Fire a 'defineAttributeHtml' event
         if ($this->hasEventHandlers(self::EVENT_DEFINE_ATTRIBUTE_HTML)) {
-            $event = new DefineAttributeHtmlEvent(['attribute' => $attribute]);
+            $event = new DefineAttributeHtmlEvent([
+                'attribute' => $attribute,
+            ]);
             $this->trigger(self::EVENT_DEFINE_ATTRIBUTE_HTML, $event);
             if (isset($event->html)) {
                 return $event->html;
@@ -5354,17 +5663,7 @@ JS, [
                 $url = $element->getUrl();
 
                 if ($url !== null) {
-                    return Html::beginTag('a', [
-                        'href' => $url,
-                        'rel' => 'noopener',
-                        'target' => '_blank',
-                        'title' => Craft::t('app', 'Visit webpage'),
-                        'aria-label' => Craft::t('app', 'View'),
-                    ]) .
-                        Html::tag('span', Cp::iconSvg('world'), [
-                            'class' => ['cp-icon', 'small', 'inline-flex'],
-                        ]) .
-                        Html::endTag('a');
+                    return ElementHelper::linkAttributeHtml($url);
                 }
 
                 return '';
@@ -5398,13 +5697,7 @@ JS, [
                         $value = str_replace($find, $replace, $element->uri);
                     }
 
-                    return Html::a(Html::tag('span', $value, ['dir' => 'ltr']), $url, [
-                        'href' => $url,
-                        'rel' => 'noopener',
-                        'target' => '_blank',
-                        'class' => 'go',
-                        'title' => Craft::t('app', 'Visit webpage'),
-                    ]);
+                    return ElementHelper::uriAttributeHtml($value, $url);
                 }
 
                 return '';
@@ -5860,7 +6153,7 @@ JS,
             $this->trigger(self::EVENT_BEFORE_SAVE, $event);
             return $event->isValid;
         }
-        
+
         return true;
     }
 
@@ -6258,28 +6551,18 @@ JS,
             return null;
         }
 
-        if (array_key_exists($handle, $this->_fieldsByHandle)) {
-            return $this->_fieldsByHandle[$handle];
-        }
-
-        $fieldsService = Craft::$app->getFields();
-        $originalFieldContext = $fieldsService->fieldContext;
-        $fieldsService->fieldContext = $this->getFieldContext();
-        $fieldLayout = $this->getFieldLayout();
-        $this->_fieldsByHandle[$handle] = $fieldLayout?->getFieldByHandle($handle);
+        $field = $this->getFieldLayout()?->getFieldByHandle($handle);
 
         // nullify values for custom fields that are not part of this layout
         // https://github.com/craftcms/cms/issues/12539
-        if ($fieldLayout && $this->_fieldsByHandle[$handle] === null) {
+        if (!$field) {
             $behavior = $this->getBehavior('customFields');
             if (isset($behavior->$handle)) {
                 $behavior->$handle = null;
             }
         }
 
-        $fieldsService->fieldContext = $originalFieldContext;
-
-        return $this->_fieldsByHandle[$handle];
+        return $field;
     }
 
     /**
@@ -6355,7 +6638,7 @@ JS,
         }
 
         /** @var ElementQuery $query */
-        $elementIds = $query->ids();
+        $elementIds = $query->cache()->ids();
         $key = array_search($this->getCanonicalId(), $elementIds, false);
 
         if ($key === false || !isset($elementIds[$key + $dir])) {

@@ -89,8 +89,14 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
         ev.preventDefault();
         if (!this.showingSidebar) {
           this.showSidebar();
+          if (this.showExpandedView) {
+            Craft.setCookie('sidebar-slideout', 'expanded');
+          }
         } else {
           this.hideSidebar();
+          if (this.showExpandedView) {
+            Craft.setCookie('sidebar-slideout', 'collapsed');
+          }
         }
       });
 
@@ -356,7 +362,10 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
 
           this.hasSidebar = true;
 
-          if (this.showExpandedView) {
+          if (
+            this.showExpandedView &&
+            (Craft.getCookie('sidebar-slideout') || 'expanded') === 'expanded'
+          ) {
             this.showSidebar(false);
           } else {
             this.hideSidebar();
@@ -378,9 +387,11 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
         this.$footer.removeClass('hidden');
 
         Garnish.requestAnimationFrame(async () => {
-          Craft.initUiElements(this.$content);
+          // Execute the response JS first so any Selectize inputs, etc.,
+          // get instantiated before field toggles
           await Craft.appendHeadHtml(data.headHtml);
           await Craft.appendBodyHtml(data.bodyHtml);
+          Craft.initUiElements(this.$content);
           Craft.cp.elementThumbLoader.load($(this.$content));
 
           if (data.sidebar) {
@@ -394,6 +405,7 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
 
           resolve();
           this.trigger('load');
+          this.settings.onLoad();
         });
       });
     },
@@ -575,10 +587,12 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
       if (data.modelClass && data.modelId) {
         Craft.refreshComponentInstances(data.modelClass, data.modelId);
       }
-      this.trigger('submit', {
+      const ev = {
         response: response,
         data: (data.modelName && data[data.modelName]) || {},
-      });
+      };
+      this.trigger('submit', ev);
+      this.settings.onSubmit(ev);
       if (this.settings.closeOnSubmit) {
         this.close();
       }
@@ -792,6 +806,8 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
       requestOptions: {},
       showHeader: null,
       closeOnSubmit: true,
+      onLoad: () => {},
+      onSubmit: () => {},
     },
   }
 );

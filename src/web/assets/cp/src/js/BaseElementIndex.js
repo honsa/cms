@@ -71,6 +71,7 @@ Craft.BaseElementIndex = Garnish.Base.extend(
     $updateSpinner: null,
     $viewModeBtnContainer: null,
     viewModeBtns: null,
+    defaultViewMode: null,
     _viewParams: null,
     _previousViewParams: null,
     _viewMode: null,
@@ -81,6 +82,7 @@ Craft.BaseElementIndex = Garnish.Base.extend(
     $actionsContainer: null,
     $actionMenuBtn: null,
     page: 1,
+    prevPage: null,
     resultSet: null,
     totalResults: null,
     totalUnfilteredResults: null,
@@ -243,7 +245,7 @@ Craft.BaseElementIndex = Garnish.Base.extend(
       this.$srStatusContainer = this.$container.find('[data-status-message]');
 
       this.$elements = this.$container.find('.elements:first');
-      this.$updateSpinner = this.$elements.find('.spinner');
+      this.$updateSpinner = this.$elements.find('.update-spinner');
 
       if (!this.$updateSpinner.length) {
         this.$updateSpinner = $('<div/>', {
@@ -1493,6 +1495,15 @@ Craft.BaseElementIndex = Garnish.Base.extend(
         }
         this.activeViewMenu = this.viewMenus[this.sourceKey];
         this.activeViewMenu.showTrigger();
+
+        // check if we should show the View button (ViewMenu.$trigger)
+        if (this.activeViewMenu) {
+          if (!this.activeViewMenu?.menuHasContent()) {
+            this.activeViewMenu.disableTrigger();
+          } else {
+            this.activeViewMenu.enableTrigger();
+          }
+        }
       }
     },
 
@@ -1546,6 +1557,11 @@ Craft.BaseElementIndex = Garnish.Base.extend(
         criteria.status = this.status;
       }
 
+      const viewState = $.extend({}, this.getSelectedSourceState());
+      if (Garnish.isMobileBrowser(true)) {
+        viewState.tableColumns = [];
+      }
+
       const params = {
         context: this.settings.context,
         elementType: this.elementType,
@@ -1557,7 +1573,7 @@ Craft.BaseElementIndex = Garnish.Base.extend(
         baseCriteria,
         criteria,
         disabledElementIds: this.settings.disabledElementIds,
-        viewState: $.extend({}, this.getSelectedSourceState()),
+        viewState,
         paginated: this.paginated,
         selectable: this.selectable,
         sortable: this.sortable,
@@ -1637,6 +1653,7 @@ Craft.BaseElementIndex = Garnish.Base.extend(
         }
 
         if (preservePagination !== true) {
+          this.prevPage = null;
           this.setPage(1);
         }
 
@@ -1874,6 +1891,9 @@ Craft.BaseElementIndex = Garnish.Base.extend(
           // Update the count text too
           this._resetCount();
           this._updateView(viewParams, response.data);
+
+          // Refresh Live Preview
+          Craft.Preview.refresh();
 
           if (typeof response.data.badgeCounts !== 'undefined') {
             this._updateBadgeCounts(response.data.badgeCounts);
@@ -2224,6 +2244,10 @@ Craft.BaseElementIndex = Garnish.Base.extend(
 
       // Get the new list of view modes
       this.sourceViewModes = this.getViewModesForSource();
+      this.defaultViewMode = this.getSourceData(
+        this.$source,
+        'defaultViewMode'
+      );
 
       // Create the buttons if there's more than one mode available to this source
       if (this.sourceViewModes.length > 1) {
@@ -2265,7 +2289,7 @@ Craft.BaseElementIndex = Garnish.Base.extend(
       }
 
       // Figure out which mode we should start with
-      var viewMode = this.getSelectedSourceState('mode');
+      let viewMode = this.getSelectedSourceState('mode', this.defaultViewMode);
 
       // Maintain the structure view for source states that were saved with an older Craft version
       if (
@@ -2282,7 +2306,9 @@ Craft.BaseElementIndex = Garnish.Base.extend(
         }
         // Just use the first one
         else {
-          viewMode = this.sourceViewModes[0].mode;
+          if (this.sourceViewModes && this.sourceViewModes.length) {
+            viewMode = this.sourceViewModes[0].mode;
+          }
         }
       }
 
@@ -2346,7 +2372,7 @@ Craft.BaseElementIndex = Garnish.Base.extend(
      * @returns {Object[]}
      */
     getSortOptions: function ($source) {
-      const sortOptions = this.getSourceData($source, 'sort-opts') || [];
+      const sortOptions = [...(this.getSourceData($source, 'sort-opts') || [])];
 
       // Make sure there's at least one attribute
       if (!sortOptions.length) {
@@ -2468,38 +2494,23 @@ Craft.BaseElementIndex = Garnish.Base.extend(
     },
 
     getViewModesForSource: function () {
-      const viewModes = [];
+      let viewModes = this.$source.data('viewModes');
 
-      if (!Garnish.isMobileBrowser(true)) {
-        if (Garnish.hasAttr(this.$source, 'data-has-structure')) {
-          viewModes.push({
-            mode: 'structure',
-            title: Craft.t('app', 'Display in a structured table'),
-            icon: Craft.orientation === 'rtl' ? 'structurertl' : 'structure',
-          });
-        }
-
-        viewModes.push({
-          mode: 'table',
-          title: Craft.t('app', 'Display in a table'),
-          icon: 'list',
-        });
+      // apply availableOnMobile
+      if (Garnish.isMobileBrowser(true)) {
+        viewModes = viewModes.filter(
+          (viewMode) => viewMode.availableOnMobile ?? true
+        );
       }
 
-      if (this.$source && Garnish.hasAttr(this.$source, 'data-has-thumbs')) {
-        viewModes.push({
-          mode: 'thumbs',
-          title: Craft.t('app', 'Display as thumbnails'),
-          icon: 'grid',
-        });
+      // apply structuresOnly
+      if (!Garnish.hasAttr(this.$source, 'data-has-structure')) {
+        viewModes = viewModes.filter(
+          (viewMode) => !(viewMode.structuresOnly ?? false)
+        );
       }
 
-      viewModes.push({
-        mode: 'cards',
-        title: Craft.t('app', 'Display as cards'),
-        icon: 'element-cards',
-      });
-
+      // filter down to the allowed ones
       if (this.settings.allowedViewModes) {
         return viewModes.filter((mode) =>
           this.settings.allowedViewModes.includes(mode.mode)
@@ -2537,7 +2548,12 @@ Craft.BaseElementIndex = Garnish.Base.extend(
 
     selectViewMode: function (viewMode, force) {
       // Make sure that the current source supports it
-      if (!force && !this.doesSourceHaveViewMode(viewMode)) {
+      if (
+        !force &&
+        !this.doesSourceHaveViewMode(viewMode) &&
+        this.sourceViewModes &&
+        this.sourceViewModes.length
+      ) {
         viewMode = this.sourceViewModes[0].mode;
       }
 
@@ -2563,6 +2579,15 @@ Craft.BaseElementIndex = Garnish.Base.extend(
         this.viewModeBtns[this._viewMode]
           .addClass('active')
           .attr('aria-pressed', 'true');
+      }
+
+      // check if we should show the View button (ViewMenu.$trigger)
+      if (this.activeViewMenu) {
+        if (!this.activeViewMenu?.menuHasContent()) {
+          this.activeViewMenu.disableTrigger();
+        } else {
+          this.activeViewMenu.enableTrigger();
+        }
       }
     },
 
@@ -2725,10 +2750,9 @@ Craft.BaseElementIndex = Garnish.Base.extend(
         let positionTop = Math.floor(scrollTop + windowHeight / 2) - 100;
         positionTop = Math.floor((positionTop / elementsHeight) * 100);
 
-        document.documentElement.style.setProperty(
-          '--elements-busy-top-position',
-          positionTop + '%'
-        );
+        this.$updateSpinner.css({
+          insetBlockStart: `${positionTop}%`,
+        });
       }
       this.updateLiveRegion(Craft.t('app', 'Loading'));
     },
@@ -3199,6 +3223,18 @@ Craft.BaseElementIndex = Garnish.Base.extend(
                 title: Craft.t('app', 'Next Page'),
               }).appendTo($paginationNav);
 
+              // Choose pagination button to focus based on user behavior
+              if (this.prevPage) {
+                let $btnToFocus =
+                  this.prevPage > this.page ? $prevBtn : $nextBtn;
+
+                if ($btnToFocus.attr('disabled') === 'disabled') {
+                  $btnToFocus = Garnish.firstFocusableElement($paginationNav);
+                }
+
+                $btnToFocus.focus();
+              }
+
               $('<div/>', {
                 class: 'page-info',
                 text: countLabel,
@@ -3208,6 +3244,7 @@ Craft.BaseElementIndex = Garnish.Base.extend(
                 this.addListener($prevBtn, 'click', function () {
                   this.removeListener($prevBtn, 'click');
                   this.removeListener($nextBtn, 'click');
+                  this.prevPage = this.page;
                   this.setPage(this.page - 1);
                   this.updateElements(true);
                 });
@@ -3217,6 +3254,7 @@ Craft.BaseElementIndex = Garnish.Base.extend(
                 this.addListener($nextBtn, 'click', function () {
                   this.removeListener($prevBtn, 'click');
                   this.removeListener($nextBtn, 'click');
+                  this.prevPage = this.page;
                   this.setPage(this.page + 1);
                   this.updateElements(true);
                 });
@@ -4019,8 +4057,6 @@ const ViewMenu = Garnish.Base.extend({
 
     this.menu.on('show', () => {
       this.$trigger.addClass('active');
-      this.updateSortField();
-      this.updateTableFieldVisibility();
     });
 
     this.menu.on('hide', () => {
@@ -4033,6 +4069,19 @@ const ViewMenu = Garnish.Base.extend({
     });
   },
 
+  updateMenuContent: function () {
+    this.updateSortField();
+    this.updateTableFieldVisibility();
+  },
+
+  menuHasContent: function () {
+    this.updateMenuContent();
+    return (
+      (this.$sortField && !this.$sortField.hasClass('hidden')) ||
+      (this.$tableColumnsField && !this.$tableColumnsField.hasClass('hidden'))
+    );
+  },
+
   showTrigger: function () {
     this.$trigger.removeClass('hidden');
   },
@@ -4043,21 +4092,24 @@ const ViewMenu = Garnish.Base.extend({
     this.menu.hide();
   },
 
+  enableTrigger: function () {
+    this.$trigger.removeClass('disabled');
+    this.$trigger.attr('aria-disabled', false);
+  },
+
+  disableTrigger: function () {
+    this.$trigger.data('trigger').hide();
+    this.$trigger.addClass('disabled');
+    this.$trigger.attr('aria-disabled', true);
+    this.menu.hide();
+  },
+
   updateTableFieldVisibility: function () {
     // we only want to show the "Table Columns" checkboxes and "Use defaults" btn in table and structure views
     if (
-      this.elementIndex.viewMode !== 'table' &&
-      this.elementIndex.viewMode !== 'structure'
+      ['table', 'structure'].includes(this.elementIndex.viewMode) &&
+      !Garnish.isMobileBrowser(true)
     ) {
-      if (this.$tableColumnsContainer) {
-        this.$tableColumnsContainer
-          .closest('.table-columns-field')
-          .addClass('hidden');
-      }
-      if (this.$revertBtn) {
-        this.$revertBtn.addClass('hidden');
-      }
-    } else {
       if (this.$tableColumnsContainer) {
         this.$tableColumnsContainer
           .closest('.table-columns-field')
@@ -4065,6 +4117,12 @@ const ViewMenu = Garnish.Base.extend({
       }
       if (this.$revertBtn) {
         this.$revertBtn.removeClass('hidden');
+      }
+    } else {
+      if (this.$tableColumnsContainer) {
+        this.$tableColumnsContainer
+          .closest('.table-columns-field')
+          .addClass('hidden');
       }
     }
   },
@@ -4517,7 +4575,7 @@ const FilterHud = Garnish.HUD.extend({
         $('<div/>', {
           text: Craft.t('app', 'Loading'),
           class: 'visually-hidden',
-          'aria-role': 'alert',
+          role: 'alert',
         })
       );
 
@@ -4545,6 +4603,7 @@ const FilterHud = Garnish.HUD.extend({
       this.hide();
     });
 
+    Craft.cp.announce(Craft.t('app', 'Loading'));
     Craft.sendActionRequest('POST', 'element-indexes/filter-hud', {
       data: {
         elementType: this.elementIndex.elementType,
@@ -4552,12 +4611,14 @@ const FilterHud = Garnish.HUD.extend({
         condition: this.elementIndex.settings.condition,
         conditionConfig: this.conditionConfig,
         serialized: this.serialized,
+        fieldLayouts: this.elementIndex.$source.data('field-layouts'),
         id: `${this.id}-filters`,
       },
     })
       .then(async (response) => {
         this.loading = false;
         this.$hud.removeClass('loading');
+        Craft.cp.announce(Craft.t('app', 'Loading complete'));
         $loadingContent.remove();
 
         this.$main.append(response.data.hudHtml);

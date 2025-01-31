@@ -1597,9 +1597,12 @@ class Users extends Component
             'id' => $user->uid,
         ];
 
+        $isCpRequest = Craft::$app->getRequest()->getIsCpRequest();
         $generalConfig = Craft::$app->getConfig()->getGeneral();
+
         $cp = (
-            $user->can('accessCp') ||
+            Craft::$app->edition->value < CmsEdition::Pro->value ||
+            ($isCpRequest && $user->can('accessCp')) ||
             ($generalConfig->headlessMode && !UrlHelper::isAbsoluteUrl($fePath))
         );
         $scheme = UrlHelper::getSchemeForTokenizedUrl($cp);
@@ -1610,7 +1613,7 @@ class Users extends Component
 
         // Only use cpUrl() if this is a control panel request, or the base control panel URL has been explicitly set,
         // so UrlHelper won't use HTTP_HOST
-        if ($generalConfig->baseCpUrl || Craft::$app->getRequest()->getIsCpRequest()) {
+        if ($generalConfig->baseCpUrl || $isCpRequest) {
             $url = UrlHelper::cpUrl($cpPath, $params, $scheme);
         } else {
             $path = UrlHelper::prependCpTrigger($cpPath);
@@ -1628,6 +1631,22 @@ class Users extends Component
     }
 
     /**
+     * Returns the maximum number of users the system can have, for the given Craft edition.
+     *
+     * @param CmsEdition $edition
+     * @return int|null
+     * @since 5.5.0
+     */
+    final public function getMaxUsers(CmsEdition $edition): ?int
+    {
+        return match ($edition) {
+            CmsEdition::Solo => 1,
+            CmsEdition::Team => 5,
+            default => null,
+        };
+    }
+
+    /**
      * Returns whether new users can be added to the system.
      *
      * @return bool
@@ -1635,11 +1654,7 @@ class Users extends Component
      */
     final public function canCreateUsers(): bool
     {
-        if (Craft::$app->edition->value >= CmsEdition::Pro->value) {
-            return true;
-        }
-
-        $max = Craft::$app->edition === CmsEdition::Solo ? 1 : 5;
-        return User::find()->status(null)->count() < $max;
+        $maxUsers = $this->getMaxUsers(Craft::$app->edition);
+        return !$maxUsers || $maxUsers > User::find()->status(null)->count();
     }
 }

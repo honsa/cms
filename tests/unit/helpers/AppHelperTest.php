@@ -94,9 +94,10 @@ class AppHelperTest extends TestCase
     {
         self::assertNull(App::parseEnv(null));
         self::assertSame(CRAFT_TESTS_PATH, App::parseEnv('$CRAFT_TESTS_PATH'));
+        self::assertSame(CRAFT_TESTS_PATH . '/foo/bar', App::parseEnv('$CRAFT_TESTS_PATH/foo/bar'));
         self::assertSame('CRAFT_TESTS_PATH', App::parseEnv('CRAFT_TESTS_PATH'));
         self::assertSame(null, App::parseEnv('$TEST_MISSING'));
-        self::assertSame(Craft::getAlias('@vendor/foo'), App::parseEnv('@vendor/foo'));
+        self::assertSame(Craft::getAlias('@vendor/foo/bar'), App::parseEnv('@vendor/foo/bar'));
     }
 
     /**
@@ -365,18 +366,6 @@ class AppHelperTest extends TestCase
         // Make sure its a component
         self::assertContains(Component::class, class_parents($result['class']));
         self::assertTrue(class_exists($result['class']));
-    }
-
-    /**
-     *
-     */
-    public function testViewConfigIndexes(): void
-    {
-        $this->setInaccessibleProperty(Craft::$app->getRequest(), '_isCpRequest', true);
-        $this->testConfigIndexes('viewConfig', ['class', 'registeredAssetBundles', 'registeredJsFiles']);
-
-        $this->setInaccessibleProperty(Craft::$app->getRequest(), '_isCpRequest', false);
-        $this->testConfigIndexes('viewConfig', ['class']);
     }
 
     /**

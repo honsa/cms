@@ -413,6 +413,19 @@ $.extend(Craft, {
   },
 
   /**
+   * Sleeps for the given duration in milliseconds.
+   *
+   * @param {number} delay
+   * @return {Promise}
+   * @since 5.6.0
+   */
+  sleep: function (delay) {
+    return new Promise((resolve) => {
+      setTimeout(resolve, delay);
+    });
+  },
+
+  /**
    * @param {string} [path]
    * @param {(Object|string)} [params]
    * @param {string} [baseUrl]
@@ -2073,7 +2086,6 @@ $.extend(Craft, {
    */
   initUiElements: function ($container) {
     $('.grid', $container).grid();
-    $('.info', $container).infoicon();
     $('.checkbox-select', $container).checkboxselect();
     $('.fieldtoggle', $container).fieldtoggle();
     $('.lightswitch', $container).lightswitch();
@@ -2087,6 +2099,26 @@ $.extend(Craft, {
     // menus last, since they can mess with the DOM
     $('.menubtn:not([data-disclosure-trigger])', $container).menubtn();
     $('[data-disclosure-trigger]', $container).disclosureMenu();
+
+    /**
+     * Swap any instruction text with info icons
+     * This needs to happen before the `infoicon` method
+     */
+    $(
+      '.field.info-icon-instructions > .instructions, #details .meta > .field > .instructions',
+      $container
+    ).each(function () {
+      const $instructions = $(this);
+      const $label = $instructions.siblings('.heading').find('label');
+      $('<div/>', {
+        class: 'info',
+        html: $instructions.children().html(),
+      }).appendTo($label);
+      // Keep the original element around in case an aria-describedby attribute is referencing it
+      $instructions.addClass('visually-hidden');
+    });
+
+    $('.info', $container).infoicon();
 
     // Open outbound links in new windows
     // hat tip: https://stackoverflow.com/a/2911045/1688568
@@ -2470,11 +2502,17 @@ $.extend(Craft, {
         for (let key of Object.keys(instances)) {
           const $element = $elements.eq(key);
           const $replacement = $(instances[key]);
-          for (let attribute of $replacement[0].attributes) {
+          const replacementAttributes = $replacement[0].attributes;
+          for (let attribute of replacementAttributes) {
             if (attribute.name === 'class') {
               $element.addClass(attribute.value);
             } else {
               $element.attr(attribute.name, attribute.value);
+            }
+          }
+          for (let attribute of $element[0].attributes) {
+            if (replacementAttributes[attribute.name] === undefined) {
+              $element.removeAttr(attribute.name);
             }
           }
           const $actions = $element
@@ -2561,8 +2599,9 @@ $.extend(Craft, {
    *
    * @param {jQuery|HTMLElement} chip
    * @param {Array} actions
+   * @param {boolean} [prepend]
    */
-  addActionsToChip(chip, actions) {
+  addActionsToChip(chip, actions, prepend = false) {
     if (!actions?.length) {
       return;
     }
@@ -2602,12 +2641,22 @@ $.extend(Craft, {
     const safeActions = actions.filter((a) => !a.destructive);
     const destructiveActions = actions.filter((a) => a.destructive);
 
+    let before = prepend
+      ? disclosureMenu.$container.children().first().get(0)
+      : null;
+
     if (safeActions.length) {
-      disclosureMenu.addItems(safeActions, disclosureMenu.addGroup());
+      disclosureMenu.addItems(
+        safeActions,
+        disclosureMenu.addGroup(null, true, before)
+      );
     }
 
     if (destructiveActions.length) {
-      disclosureMenu.addItems(destructiveActions, disclosureMenu.addGroup());
+      disclosureMenu.addItems(
+        destructiveActions,
+        disclosureMenu.addGroup(null, true, before)
+      );
     }
 
     Craft.initUiElements(disclosureMenu.$container);
@@ -3107,7 +3156,11 @@ $.extend($.fn, {
       let checkValue = () => {
         let hasValue = false;
         for (let i = 0; i < $inputs.length; i++) {
-          if ($inputs.eq(i).val() && !$inputs.eq(i).is(':disabled')) {
+          if ($inputs.eq(i).is(':disabled')) {
+            hasValue = false;
+            break;
+          }
+          if ($inputs.eq(i).val()) {
             hasValue = true;
             break;
           }
