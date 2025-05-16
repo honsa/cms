@@ -182,7 +182,7 @@ import './plugins.scss';
 
           disclosureMenu.addItems([
             {
-              icon: 'clipboard',
+              icon: async () => await Craft.ui.icon('clipboard'),
               label: Craft.t('app', 'Copy plugin handle'),
               onActivate: () => {
                 Craft.ui.createCopyTextPrompt({
@@ -192,7 +192,7 @@ import './plugins.scss';
               },
             },
             {
-              icon: 'clipboard',
+              icon: async () => await Craft.ui.icon('clipboard'),
               label: Craft.t('app', 'Copy package name'),
               onActivate: () => {
                 Craft.ui.createCopyTextPrompt({
@@ -205,7 +205,7 @@ import './plugins.scss';
           disclosureMenu.addHr();
           disclosureMenu.addGroup();
           disclosureMenu.addItem({
-            icon: 'plus',
+            icon: async () => await Craft.ui.icon('plus'),
             label: Craft.t('app', 'Install'),
             action: 'pluginstore/install',
             params: {

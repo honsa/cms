@@ -27,7 +27,7 @@ $gridColor: var(--gray-100);
   box-shadow: none;
   min-height: 500px;
 
-  .errors > & {
+  .errors > .layoutdesigner > & {
     border: 1px solid var(--error-color) !important;
   }
 
@@ -61,6 +61,7 @@ $gridColor: var(--gray-100);
   max-width: 100%;
 
   .main {
+    height: 100%;
     padding: $tabPadding;
   }
 }
@@ -72,18 +73,25 @@ $gridColor: var(--gray-100);
 .fld-library {
   display: flex;
   flex-direction: column;
+  height: 100%;
 
   .btngroup {
     margin-block-end: $tabPadding;
   }
 
-  .fld-field-library {
-    margin: -3px;
-    padding: 3px;
+  .fld-field-library,
+  .fld-ui-library {
+    margin-block: -3px;
+    margin-inline: #{-$tabPadding};
+    padding-block: 3px;
+    padding-inline: #{$tabPadding};
     flex: 1;
     min-height: 0;
+    max-height: 550px;
     overflow: auto;
+  }
 
+  .fld-field-library {
     .fld-field-group {
       margin-block-start: $tabPadding;
 
@@ -165,13 +173,15 @@ $gridColor: var(--gray-100);
         cursor: move;
         cursor: grab;
       }
-
-      span {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
     }
+  }
+
+  .fld-tab__name {
+    margin-block: 0;
+    font-weight: var(--font-weight-regular);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .fld-tabcontent {
@@ -350,6 +360,10 @@ $gridColor: var(--gray-100);
   padding-inline: var(--padding);
   overflow: hidden auto;
   position: relative;
+
+  hr {
+    margin-inline: -24px;
+  }
 }
 
 .fld-element-settings-footer {

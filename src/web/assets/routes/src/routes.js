@@ -33,7 +33,7 @@ import './routes.scss';
     },
 
     getRoutes: function () {
-      return this.$container.children();
+      return this.$container.children('.route');
     },
 
     updateRouteOrder: function () {
@@ -233,9 +233,9 @@ import './routes.scss';
         '</button>' +
         '<div class="spinner" style="display: none;"></div>' +
         '</div>' +
-        '<a class="delete">' +
+        '<button type="button" class="delete btn chromeless">' +
         Craft.t('app', 'Delete') +
-        '</a>' +
+        '</button>' +
         '</div>' +
         '</form>';
 

@@ -1,4 +1,5 @@
 @charset "UTF-8";
+@charset "UTF-8";
 @use 'sass:color';
 @use 'variables';
 @use '@craftcms/sass/mixins';
@@ -1010,7 +1011,7 @@ button {
       position: relative;
       inset-inline-start: 1px;
       color: var(--blue-800) !important;
-      font-size: 18px;
+      font-size: 17px;
     }
 
     &::after {
@@ -1070,11 +1071,8 @@ button {
     box-sizing: border-box;
     box-shadow: 0 1px 1px 1px var(--white);
 
-    &::before {
-      position: relative;
-      inset-inline-start: 1px;
-      color: var(--grey-800) !important;
-      font-size: 18px;
+    .cp-icon {
+      --icon-size: calc(20rem / 16);
     }
 
     &::after {
@@ -1391,17 +1389,22 @@ td.right {
   color: var(--error-color) !important;
 }
 
-.icon.move:not(.disabled) {
-  cursor: move;
+.icon.move,
+.move-btn {
+  &:not(.disabled) {
+    cursor: move !important;
+  }
 }
 
-.icon.move::before {
-  content: 'move';
-  color: var(--custom-text-color, var(--ui-control-color));
-}
+.icon.move {
+  &::before {
+    content: 'move';
+    color: var(--custom-text-color, var(--ui-control-color));
+  }
 
-.icon.move:not(.disabled):hover::before {
-  color: var(--link-color);
+  &:not(.disabled):hover::before {
+    color: var(--link-color);
+  }
 }
 
 .icon.delete {
@@ -1944,15 +1947,16 @@ ul.icons {
   justify-content: center;
   border: var(--button-border);
   border-radius: var(--button-border-radius);
-  padding: var(--button-padding);
+  padding-inline: var(--button-padding);
   text-align: center;
   user-select: none;
   box-sizing: border-box;
   appearance: none;
-  color: currentcolor;
+  color: var(--text-color);
   font-size: inherit;
   text-wrap: nowrap;
   background-color: var(--button-bg);
+  min-height: calc(34rem / 16);
 
   &:hover {
     border: var(--button-border--hover);
@@ -1980,13 +1984,16 @@ ul.icons {
   &.link-btn {
     border: none;
     background: transparent;
-    box-shadow: none;
+
+    &:focus-visible {
+      box-shadow: var(--focus-ring);
+    }
   }
 
   &.chromeless {
     height: auto;
     min-height: var(--touch-target-size);
-    padding: 0;
+    padding-inline: 0;
 
     &:hover,
     &:active,
@@ -2044,7 +2051,7 @@ ul.icons {
 
   &.wrap {
     height: auto;
-    min-height: 34px;
+    min-height: calc(34rem / 16);
     white-space: initial;
     text-align: start;
   }
@@ -2064,7 +2071,7 @@ ul.icons {
   }
 
   &[type='color'] {
-    padding: 6px !important;
+    padding-inline: 6px !important;
     width: 36px;
   }
 
@@ -2097,6 +2104,7 @@ ul.icons {
   &.loading {
     &::before,
     &::after,
+    .cp-icon,
     .label {
       visibility: hidden;
     }
@@ -2154,9 +2162,9 @@ ul.icons {
   }
 }
 
-.btn,
-.spinner {
+.btn {
   height: var(--input-height);
+  min-height: var(--input-height);
 }
 
 .btn[data-icon-after]:not(:empty, .btn-empty)::after,
@@ -2172,13 +2180,23 @@ ul.icons {
   position: relative;
 }
 
-.btn.small[data-icon]::before,
-.btn.small[data-icon-after]::after,
-.btn.icon.small::before {
-  font-size: 10px;
+.btn.small {
+  --icon-size: calc(12rem / 16);
+
+  &[data-icon]::before,
+  &[data-icon-after]::after,
+  &.icon::before {
+    font-size: 12px;
+  }
 }
 
 /* button groups */
+.btngroup-container {
+  margin: -3px;
+  padding: 3px;
+  overflow-x: auto;
+}
+
 .btngroup {
   position: relative;
   z-index: 1;
@@ -2244,24 +2262,30 @@ ul.icons {
 }
 
 craft-copy-attribute {
+  display: inline-block;
   @include mixins.fixed-width-font(calc(11rem / 16));
-  border: 1px solid var(--hairline-color);
-  padding-block: 0;
-  padding-inline: 5px;
-  border-radius: var(--button-border-radius);
   color: var(--medium-text-color);
+  height: calc(22rem / 16);
 
   button {
     gap: 5px;
     display: inline-flex;
+    border: 1px solid var(--hairline-color);
+    border-radius: var(--button-border-radius);
+    padding-inline: 5px;
     flex-wrap: nowrap;
     align-items: center;
     cursor: pointer;
+    height: 100%;
 
     &:hover,
     &:focus {
       border-color: var(--medium-hairline-color);
       color: var(--text-color);
+    }
+
+    span[data-icon] {
+      margin-block-start: -3px;
     }
   }
 }
@@ -2403,7 +2427,7 @@ craft-copy-attribute {
   padding-inline: var(--s) !important;
   font-size: 12px;
   line-height: calc(22rem / 16);
-  height: calc(22rem / 16) !important;
+  min-height: calc(22rem / 16) !important;
 }
 
 .btngroup.small,
@@ -2437,7 +2461,7 @@ craft-copy-attribute {
 
 /* huge buttons */
 .btn.huge {
-  padding: var(--l);
+  padding-inline: var(--l);
   line-height: calc(48rem / 16);
   height: calc(48rem / 16);
 }
@@ -2458,8 +2482,7 @@ craft-copy-attribute {
 
     &:not(.disabled, .inactive, .loading) {
       &:hover,
-      &.hover,
-      &:focus {
+      &.hover {
         border: var(--primary-button-border--hover) !important;
         background: var(--primary-button-bg--hover) !important;
       }
@@ -2534,7 +2557,7 @@ div.btn.submit input {
 
 /* dashed buttons */
 .btn.dashed {
-  border: 1px dashed var(--medium-hairline-color);
+  border: 1px dashed #{color.adjust(mixins.$inputColor, $alpha: -0.5)};
   background-color: transparent;
 
   .btngroup &:not(:last-child, .btngroup-btn-last) {
@@ -2542,13 +2565,9 @@ div.btn.submit input {
     margin-inline-end: -1px;
   }
 
-  &:focus {
+  &:focus-visible {
     background-color: color.adjust(mixins.$grey200, $alpha: -0.9);
     border-color: transparent;
-
-    .reduce-focus-visibility &:not(:focus-visible) {
-      border: 1px dashed var(--medium-hairline-color);
-    }
   }
 
   &:not(.disabled) {
@@ -2567,10 +2586,11 @@ div.btn.submit input {
 
   .btn {
     position: relative;
-    padding: 0;
+    padding-inline: 0;
     border-radius: 0;
     background-color: transparent;
     height: var(--ui-control-height);
+    min-height: auto;
 
     &.current-step,
     &.active-drop-target {
@@ -2594,7 +2614,7 @@ div.btn.submit input {
       @include mixins.light-focus-ring;
     }
 
-    &:focus {
+    &:focus-visible {
       z-index: 1;
       box-shadow: none;
 
@@ -2602,14 +2622,6 @@ div.btn.submit input {
         z-index: 1;
         box-shadow: var(--focus-ring);
       }
-
-      .reduce-focus-visibility &:not(:focus-visible) .label {
-        box-shadow: none;
-      }
-    }
-
-    .reduce-focus-visibility &:focus-visible .label {
-      box-shadow: var(--focus-ring);
     }
 
     &:not(.has-action-menu) {
@@ -2849,6 +2861,7 @@ div.btn.submit input {
   user-select: none;
   background-image: linear-gradient(to right, var(--gray-400), var(--gray-400));
   transition: background-image linear 100ms;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 10%); // Ensures contrast with pane background is over 3:1
 
   &.on {
     background-image: linear-gradient(
@@ -2872,8 +2885,9 @@ div.btn.submit input {
 
     .handle {
       position: absolute;
-      inset-block-start: 1px;
+      inset-block-start: 2px;
       background-color: var(--white);
+      box-shadow: 0 0 0 1px rgb(0 0 0 / 10%); // Ensures contrast with pane background is over 3:1
     }
   }
 
@@ -2888,10 +2902,10 @@ div.btn.submit input {
       width: 46px;
 
       .handle {
-        border-radius: 10px;
-        width: 20px;
-        height: 20px;
-        inset-inline-start: calc(50% - 10px);
+        border-radius: 9px;
+        width: 18px;
+        height: 18px;
+        inset-inline-start: calc(50% - 9px);
       }
     }
   }
@@ -2907,9 +2921,9 @@ div.btn.submit input {
 
       .handle {
         border-radius: 8px;
-        width: 16px;
-        height: 16px;
-        inset-inline-start: calc(50% - 8px);
+        width: 14px;
+        height: 14px;
+        inset-inline-start: calc(50% - 7px);
       }
     }
   }
@@ -2983,7 +2997,7 @@ div.btn.submit input {
         }
       }
 
-      @include mixins.focus-styles {
+      &:focus-visible {
         box-shadow:
           inset 0 0 0 1px var(--hairline-color),
           var(--focus-ring);
@@ -3259,6 +3273,17 @@ table {
             td {
               color: var(--white);
               background-color: var(--selected-bg-color);
+
+              .chip {
+                color: var(--white);
+
+                &:not(.chromeless) {
+                  background-color: var(
+                    --custom-sel-bg-color,
+                    var(--gray-600)
+                  ) !important;
+                }
+              }
             }
 
             .icon,
@@ -3416,13 +3441,73 @@ table {
 }
 
 .chip,
-.card {
+.card,
+.matrixblock {
+  position: relative;
+  border-radius: var(--large-border-radius);
   color: var(--custom-text-color, var(--text-color));
-  background-color: var(--custom-bg-color, var(--gray-050));
 
-  &.hairline {
-    border: 1px solid var(--medium-hairline-color);
-    background-color: transparent;
+  --custom-border-color: initial;
+  --custom-titlebar-bg-color: initial;
+  --custom-bg-color: initial;
+  --custom-text-color: initial;
+  --custom-sel-titlebar-bg-color: initial;
+  --custom-sel-bg-color: initial;
+
+  &:not(.chromeless, .hairline) {
+    background-color: var(--custom-bg-color, var(--gray-050));
+    box-shadow: 0 2px 6px -1px rgb(0 0 0 / 5%);
+  }
+
+  &:not(.chromeless)::before {
+    position: absolute;
+    content: '';
+    inset: 0;
+    border-radius: var(--large-border-radius);
+    box-shadow: inset 0 0 0 1px var(--custom-border-color, var(--gray-150));
+    pointer-events: none;
+    z-index: 1;
+  }
+}
+
+.chip,
+.card {
+  overflow: hidden; // needed for status indicators
+
+  &.sel,
+  tr.sel &,
+  li.sel &,
+  li.active-drop-target &,
+  .card.sel & {
+    --text-color: var(--white);
+    --custom-text-color: var(--white) !important;
+    --medium-dark-text-color: var(--white);
+    --medium-text-color: var(--white);
+    --light-text-color: var(--white);
+    --link-color: var(--white);
+    --ui-control-color: var(--white);
+    --custom-border-color: rgb(0 0 0 / 10%) !important;
+    @include mixins.custom-color-focus-ring(hsl(var(--light-focus-hsl)));
+    color: var(--white);
+
+    &:not(.chromeless) {
+      background-color: var(
+        --custom-sel-bg-color,
+        var(--dark-sel-color)
+      ) !important;
+    }
+
+    .icon,
+    .cp-icon,
+    [data-icon],
+    [data-icon-after] {
+      --icon-color: var(--white) !important;
+    }
+
+    .thumb {
+      filter: brightness(0.85);
+      opacity: 0.75;
+    }
   }
 }
 
@@ -3435,23 +3520,33 @@ table {
   user-select: none;
   font-weight: normal;
   padding-block: 0;
-  padding-inline: var(--s);
   max-width: 100%;
   gap: var(--xs);
   border-radius: var(--large-border-radius);
 
+  &:not(.chromeless) {
+    padding-inline: var(--s);
+  }
+
   &.small {
     flex-direction: row;
-    min-height: calc(26rem / 16 + 8px);
 
     --thumb-size: calc(30rem / 16);
 
     & > .thumb {
-      margin-inline: -2px 2px;
+      margin-inline-end: 2px;
       margin-block: 0;
 
       &.cp-icon {
         --thumb-size: 1rem; // 16px
+      }
+    }
+
+    &:not(.chromeless) {
+      min-height: calc(26rem / 16 + 8px);
+
+      & > .thumb {
+        margin-inline-start: -2px;
       }
     }
   }
@@ -3462,10 +3557,13 @@ table {
     --thumb-size: 120px;
     min-width: calc(var(--s) * 2 + var(--thumb-size));
     width: 100%;
-    padding-block: var(--xs);
 
     .chip-content {
       width: 100%;
+    }
+
+    &:not(.chromeless) {
+      padding-block: var(--xs);
     }
   }
 
@@ -3509,49 +3607,12 @@ table {
     }
   }
 
+  &:not(.large) .chip-content .chip-actions {
+    margin-inline-end: 4px;
+  }
+
   &:has(.thumb):not(.large) .chip-content {
-    min-width: calc(100% - var(--thumb-size));
-  }
-
-  &.sel,
-  li.sel &,
-  li.active-drop-target &,
-  .card.sel & {
-    --text-color: var(--white);
-    --custom-text-color: var(--white) !important;
-    --medium-dark-text-color: var(--white);
-    --medium-text-color: var(--white);
-    --light-text-color: var(--white);
-    --link-color: var(--white);
-    --ui-control-color: var(--white);
-    @include mixins.custom-color-focus-ring(hsl(var(--light-focus-hsl)));
-    color: var(--white);
-    background-color: var(
-      --custom-sel-bg-color,
-      var(--dark-sel-color)
-    ) !important;
-
-    .icon,
-    .cp-icon,
-    [data-icon],
-    [data-icon-after] {
-      --icon-color: var(--white) !important;
-    }
-  }
-
-  &.sel,
-  .sel & {
-    cursor: default;
-
-    .thumb {
-      filter: brightness(0.85);
-
-      img {
-        box-shadow:
-          0 0 0 1px color.adjust(mixins.$darkSelColor, $alpha: -0.9),
-          0 6px 4px -4px color.adjust(mixins.$darkSelColor, $alpha: -0.8);
-      }
-    }
+    min-width: calc(100% - var(--thumb-size) - var(--s));
   }
 
   .offset-drag-helper & {
@@ -3628,10 +3689,6 @@ table {
 .cards {
   display: flex;
 
-  --custom-bg-color: initial;
-  --custom-text-color: initial;
-  --custom-sel-bg-color: initial;
-
   &:not(.inline-chips) {
     flex-direction: column;
   }
@@ -3660,65 +3717,77 @@ table {
   display: flex;
   flex-flow: row wrap;
   align-items: center;
-  gap: var(--s);
+  gap: var(--xs);
 
   .chip {
     margin: 0 !important;
   }
 }
 
-.elements.inline-chips {
+.elements.inline-chips.chips-large {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
 }
 
 /** cards */
 .card {
-  position: relative;
   display: flex;
-  flex-direction: row;
-  align-items: stretch;
-  padding: var(--m);
-  gap: var(--s);
-  border-radius: var(--large-border-radius);
-  cursor: default;
-  user-select: none;
-  width: 100%;
-  overflow: hidden;
+  flex-direction: column;
 
   &::after {
     border-radius: var(--large-border-radius);
   }
 
-  &.sel,
-  li.sel & {
-    --text-color: var(--white);
-    --custom-text-color: var(--white) !important;
-    --medium-dark-text-color: var(--white);
-    --medium-text-color: var(--white);
-    --light-text-color: var(--white);
-    --link-color: var(--white);
-    --ui-control-color: var(--white);
-    @include mixins.custom-color-focus-ring(hsl(var(--light-focus-hsl)));
-    color: var(--white);
-    background-color: var(
-      --custom-sel-bg-color,
-      var(--dark-sel-color)
-    ) !important;
+  & > .card-titlebar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-inline: var(--m);
+    background-color: var(--custom-titlebar-bg-color, var(--gray-100));
+    border-start-start-radius: var(--large-border-radius);
+    border-start-end-radius: var(--large-border-radius);
+    min-height: calc(var(--lh) + 10px);
+    user-select: none;
+
+    .card-titlebar-label {
+      font-size: 0.8em !important;
+    }
+
+    & > .card-actions-container {
+      display: flex;
+      align-items: flex-start !important;
+      position: relative;
+    }
+  }
+
+  & > .card-main {
+    position: relative;
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    padding-block: var(--s);
+    padding-inline: var(--m);
+    gap: var(--s);
+    border-end-start-radius: var(--large-border-radius);
+    border-end-end-radius: var(--large-border-radius);
+    width: 100%;
+    overflow: hidden;
 
     & > .thumb {
-      filter: brightness(0.85);
-    }
+      display: flex;
+      justify-content: center;
+      flex: 0 0 120px;
+      width: 120px;
+      max-height: 120px;
+      overflow: hidden;
+      align-self: start;
 
-    .icon,
-    .cp-icon,
-    [data-icon],
-    [data-icon-after] {
-      --icon-color: var(--white) !important;
-    }
-
-    .status-label .status-label-text {
-      --status-label-text-color: var(--white) !important;
+      img,
+      svg {
+        max-width: 120px;
+        max-height: 120px;
+        border-radius: var(--small-border-radius);
+      }
     }
   }
 
@@ -3727,31 +3796,6 @@ table {
       padding-inline: 0 !important;
       list-style-type: none;
     }
-  }
-
-  & > .thumb {
-    display: flex;
-    flex: 0 0 128px;
-    width: 128px;
-    overflow: hidden;
-    align-self: start;
-    border-radius: var(--small-border-radius);
-
-    img,
-    svg {
-      width: 100%;
-      max-height: 128px;
-      object-fit: cover;
-    }
-
-    & + .card-content {
-      margin-inline-start: calc(var(--m) - var(--s));
-    }
-  }
-
-  & > .cp-icon {
-    margin-inline: -2px -4px;
-    margin-block: 3px 0;
   }
 
   .card-content,
@@ -3793,17 +3837,39 @@ table {
         overflow: hidden;
         text-wrap: pretty;
       }
-
-      .chip.small {
-        padding-inline: 0;
-      }
     }
   }
 
-  & > .card-actions-container {
-    display: flex;
-    align-items: flex-start !important;
-    position: relative;
+  &.sel,
+  li.sel & {
+    --text-color: var(--white);
+    --custom-text-color: var(--white) !important;
+    --medium-dark-text-color: var(--white);
+    --medium-text-color: var(--white);
+    --light-text-color: var(--white);
+    --link-color: var(--white);
+    --ui-control-color: var(--white);
+    @include mixins.custom-color-focus-ring(hsl(var(--light-focus-hsl)));
+    color: var(--white);
+    background-color: var(
+      --custom-sel-bg-color,
+      var(--dark-sel-color)
+    ) !important;
+
+    & > .card-titlebar {
+      background-color: var(--custom-sel-titlebar-bg-color, var(--gray-600));
+
+      .icon,
+      .cp-icon,
+      [data-icon],
+      [data-icon-after] {
+        --icon-color: var(--white) !important;
+      }
+    }
+
+    .status-label .status-label-text {
+      --status-label-text-color: var(--white) !important;
+    }
   }
 }
 
@@ -3878,6 +3944,51 @@ table {
   border-radius: calc(var(--touch-target-size) / 2) !important;
 }
 
+.chip > .chip-content > .chip-actions,
+.card > .card-titlebar > .card-actions-container > .card-actions,
+.matrixblock > .actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--s);
+  min-height: calc(22rem / 16);
+
+  &:empty {
+    display: none;
+  }
+
+  & > .status {
+    margin: 0;
+  }
+
+  & > .btn.chromeless,
+  & > .action-btn {
+    padding-inline: 0 !important;
+    height: var(--touch-target-size);
+    width: var(--touch-target-size);
+    margin-block: 0;
+    margin-inline: -4px;
+
+    &::before {
+      color: var(--custom-text-color, var(--ui-control-color));
+    }
+  }
+
+  .action-btn {
+    background-color: transparent;
+
+    &::before {
+      margin-inline-end: 0 !important;
+    }
+
+    &:hover,
+    &:active,
+    &[aria-expanded='true'] {
+      backdrop-filter: brightness(90%);
+    }
+  }
+}
+
 .chip,
 .card {
   // prevent double focus ring (chip/card already gets it)
@@ -3918,53 +4029,6 @@ table {
       .sel & {
         @include mixins.angle(right, var(--white), calc(1rem / 16));
       }
-    }
-  }
-
-  & > .chip-content > .chip-actions,
-  & > .card-actions-container > .card-actions {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: var(--s);
-    min-height: calc(22rem / 16);
-
-    &:empty {
-      display: none;
-    }
-
-    & > .status {
-      margin: 0;
-    }
-
-    & > .action-btn,
-    & > .move {
-      height: var(--touch-target-size);
-      width: var(--touch-target-size);
-      margin-block: 0;
-      margin-inline: -4px;
-
-      &::before {
-        color: var(--custom-text-color, var(--ui-control-color));
-      }
-    }
-
-    .action-btn {
-      background-color: transparent;
-
-      &::before {
-        margin-inline-end: 0 !important;
-      }
-
-      &:hover,
-      &:active,
-      &[aria-expanded='true'] {
-        backdrop-filter: brightness(90%);
-      }
-    }
-
-    .move {
-      margin-block-start: -3px !important;
     }
   }
 
@@ -4035,8 +4099,12 @@ table {
 
   &.main {
     .source-path {
-      margin-block: -22px 24px;
+      margin-block: calc(var(--padding) * -1 + 2px) 24px;
       margin-inline: calc(var(--padding) * -1 + 2px);
+
+      & + .elements > .tablepane {
+        margin-block-start: calc(var(--xl) * -1 + 2px);
+      }
     }
 
     .inline-editing {
@@ -4184,6 +4252,11 @@ table {
 
   // table views
   .tableview {
+    th,
+    td {
+      height: 34px;
+    }
+
     th {
       .move,
       .toggle {
@@ -4218,10 +4291,6 @@ table {
       }
     }
 
-    .chip {
-      background-color: transparent;
-    }
-
     tr.disabled {
       opacity: 1;
 
@@ -4240,7 +4309,7 @@ table {
   // thumbs views
   .thumbsview {
     display: grid;
-    gap: var(--xs);
+    gap: var(--s);
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
 
     li {
@@ -4273,15 +4342,6 @@ table {
 
     .chip-content {
       max-width: 100%;
-    }
-  }
-}
-
-.tableview {
-  .inline-chips {
-    .chip {
-      padding: 0;
-      background-color: transparent;
     }
   }
 }
@@ -4486,14 +4546,14 @@ table {
 /* editable tables */
 table.editable {
   border-radius: var(--large-border-radius);
-  border: 1px solid var(--gray-200);
+  border: var(--input-border);
+  color: var(--text-color);
 
   th,
   td.heading,
   td.action {
     color: var(--medium-text-color);
     font-weight: normal;
-    background-color: var(--gray-050);
 
     button:not(.lightswitch),
     a {
@@ -4532,10 +4592,68 @@ table.editable {
     }
   }
 
+  thead:first-child,
+  tbody:first-child,
+  colgroup + thead,
+  colgroup + tbody {
+    tr:first-child {
+      th,
+      td {
+        &:first-child {
+          border-start-start-radius: var(--large-border-radius);
+
+          textarea,
+          input.text {
+            border-start-start-radius: calc(var(--large-border-radius) - 1px);
+          }
+        }
+
+        &:last-child {
+          border-start-end-radius: var(--large-border-radius);
+
+          textarea,
+          input.text {
+            border-start-end-radius: calc(var(--large-border-radius) - 1px);
+          }
+        }
+      }
+    }
+  }
+
+  thead,
+  tbody {
+    &:last-child tr:last-child {
+      th,
+      td {
+        &:first-child {
+          border-end-start-radius: var(--large-border-radius);
+
+          textarea,
+          input.text {
+            border-end-start-radius: calc(var(--large-border-radius) - 1px);
+          }
+        }
+
+        &:last-child {
+          border-end-end-radius: var(--large-border-radius);
+
+          textarea,
+          input.text {
+            border-end-end-radius: calc(var(--large-border-radius) - 1px);
+          }
+        }
+      }
+    }
+  }
+
   thead {
     tr {
       th {
         border-block-end: 1px solid var(--hairline-color);
+        font-family: inherit; // for .code
+        font-size: 0.8em !important; // ! for .code
+        font-weight: 500;
+        line-height: 1.4;
 
         &.has-info {
           padding-inline-end: calc(15px + 1em);
@@ -4558,23 +4676,14 @@ table.editable {
         }
       }
 
-      &:last-child {
-        td:first-child {
-          border-end-start-radius: var(--large-border-radius);
-
-          textarea,
-          input.text {
-            border-end-start-radius: calc(var(--large-border-radius) - 1px);
-          }
-        }
-      }
-
       td:not(:first-child),
       th ~ td:not(.hidden) ~ td {
         border-inline-start: 1px solid var(--hairline-color);
       }
 
       th {
+        font-weight: 500;
+
         // Set a dark border-left for the first <td> that follows a <th>, if there is one.
         // This is a ridiculous CSS hack since there's no operator/pseudo-class that mimics jQuery's next(selector) function.
         // If there was it could have been as simple as: th ??? td:not(.hidden) { dark left border }
@@ -4586,7 +4695,7 @@ table.editable {
 
       td {
         vertical-align: top;
-        background-color: var(--white);
+        background-color: var(--input-bg);
         padding-block: 4px;
         padding-inline: 10px;
 
@@ -4640,6 +4749,10 @@ table.editable {
             width: 16px;
             height: 16px;
           }
+        }
+
+        &.icon-cell {
+          padding-block: 6px;
         }
 
         &.error {
@@ -4974,36 +5087,25 @@ $statusLabelBgShade: '500';
 .status-label {
   position: relative;
   display: inline-flex;
-  align-items: center;
+  align-items: start;
   justify-content: center;
   gap: var(--xs);
-  height: calc(22rem / 16);
-  padding-block: 0;
-  padding-inline: var(--s);
-
-  &::before {
-    position: absolute;
-    display: block;
-    inset: 0;
-    background-color: var(--status-label-bg-color);
-    border-radius: calc(11rem / 16);
-    content: '';
-    opacity: 0.15;
-    user-select: none;
-    pointer-events: none;
-  }
+  padding-block: var(--xs);
+  padding-inline: var(--xs) var(--s);
+  line-height: 1.1;
+  font-size: calc(11rem / 16);
+  background-color: rgb(from var(--status-label-bg-color) r g b / 15%);
+  border-radius: calc(11rem / 16);
+  font-weight: 500;
+  text-transform: uppercase;
 
   .status,
   .cp-icon {
-    margin-inline: -3px 0;
-    margin-block: 0;
+    position: relative;
+    margin: 0;
   }
 
   .status-label-text {
-    position: relative;
-    font-size: 11px;
-    font-weight: 500;
-    text-transform: uppercase;
     color: var(--status-label-text-color);
   }
 
@@ -5454,7 +5556,8 @@ table.data tbody tr:not(.disabled).active-drop-target {
 
   .pane &,
   .slideout &,
-  #content & {
+  #content &,
+  .lp-content & {
     border: 1px solid var(--hairline-color);
     background: var(--secondary-pane-bg);
     box-shadow: none;
@@ -5466,7 +5569,8 @@ table.data tbody tr:not(.disabled).active-drop-target {
     border: 1px dashed var(--medium-hairline-color) !important;
   }
 
-  &.hairline {
+  &.hairline,
+  &:is(fieldset) {
     background-color: transparent !important;
     box-shadow: none;
     border: 1px solid #{color.adjust(mixins.$inputColor, $alpha: -0.75)} !important;
@@ -5505,6 +5609,11 @@ table.data tbody tr:not(.disabled).active-drop-target {
       width: calc(100% + #{24 + 24}px);
       height: 100%;
     }
+  }
+
+  &:is(fieldset) > legend {
+    font-weight: 600;
+    color: var(--light-text-color);
   }
 
   hr {
@@ -5598,9 +5707,7 @@ table.data tbody tr:not(.disabled).active-drop-target {
         text-decoration: none;
       }
 
-      @include mixins.focus-styles {
-        box-shadow: none;
-
+      &:focus-visible {
         .tab-label {
           box-shadow: var(--inner-focus-ring);
         }
@@ -5772,6 +5879,11 @@ table.data tbody tr:not(.disabled).active-drop-target {
     resize: none;
   }
 
+  .data {
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+  }
+
   & > .field .heading,
   & > fieldset > legend {
     margin-block: 0 var(--s);
@@ -5836,7 +5948,7 @@ $min2ColWidth: 400px;
   --heading-width: 150px;
 
   #details & {
-    --heading-width: 126px;
+    --heading-width: 132px;
   }
 
   &,
@@ -6028,11 +6140,11 @@ $min2ColWidth: 400px;
 
             @media screen and (min-width: $min2ColWidth) {
               margin-inline: calc(var(--s) * -1) 0;
-              padding-inline-start: var(--m);
+              padding-inline-start: var(--s);
             }
 
             &:placeholder-shown + div[data-icon] {
-              inset-inline-start: 6px;
+              inset-inline-start: 1px;
             }
           }
         }
@@ -6070,9 +6182,13 @@ $min2ColWidth: 400px;
       & > ul.errors {
         margin: 0;
         padding-block: 0 6px;
-        padding-inline: 0;
+        padding-inline: 10px;
         width: 100%;
         list-style-type: none;
+
+        @media screen and (min-width: $min2ColWidth) {
+          padding-inline: var(--m);
+        }
       }
 
       & > .clear-btn {
@@ -6233,8 +6349,8 @@ $min2ColWidth: 400px;
   }
 
   &.so-mobile {
-    --padding: 14px;
-    --neg-padding: -14px;
+    --padding: var(--m);
+    --neg-padding: calc(var(--m) * -1);
   }
 
   &.so-lp {
@@ -6263,6 +6379,11 @@ $min2ColWidth: 400px;
     padding-inline: var(--padding);
     z-index: 2;
     border-radius: 0;
+
+    // keep the margin-block-start as it was for wider viewports
+    @media only screen and (width <= 767px) {
+      margin-block: calc(var(--xl) * -1) var(--padding);
+    }
 
     & > .so-toolbar {
       display: flex;
@@ -6311,6 +6432,11 @@ $min2ColWidth: 400px;
       padding-block: 0 var(--spacing);
       padding-inline: var(--padding);
 
+      // set the margin-block-start so the slideout doesn't overlap the toolbar
+      @media only screen and (width <= 767px) {
+        margin-block-start: 16px;
+      }
+
       & > .preview-thumb-container {
         margin-block: 0;
         margin-inline: var(--neg-padding);
@@ -6357,7 +6483,7 @@ $min2ColWidth: 400px;
       height: 100%;
       max-width: 100%;
       overflow: hidden auto;
-      z-index: 1;
+      z-index: 1001;
 
       body.ltr & {
         transition: inset-inline-end linear 250ms;
@@ -6365,6 +6491,10 @@ $min2ColWidth: 400px;
 
       body.rtl & {
         transition: inset-inline-start linear 250ms;
+      }
+
+      & > fieldset:first-child {
+        margin-block-start: 24px !important;
       }
     }
   }
@@ -6383,6 +6513,11 @@ $min2ColWidth: 400px;
     background: var(--slideout-footer-bg);
     box-shadow: var(--slideout-footer-shadow);
     z-index: 3;
+
+    & > .so-notice {
+      display: flex;
+      align-items: center;
+    }
 
     & > .so-extra {
       flex: 0 0 100%;
@@ -7257,8 +7392,7 @@ $min2ColWidth: 400px;
   font-size: 1rem;
   position: relative;
 
-  @include mixins.focus-styles {
-    // Unset default
+  &:focus-visible {
     box-shadow: none;
     color: var(--white);
     background-color: var(--gray-800);
@@ -7512,14 +7646,26 @@ $min2ColWidth: 400px;
   }
 }
 
-.menu--disclosure ul li {
-  & > a:not(.crumb-link),
-  & > .menu-item,
-  & > .menu-option {
-    --focus-ring: var(--inner-focus-ring);
+.menu--disclosure {
+  & > .search-container {
+    margin-inline: calc(var(--m) * -1);
+    padding: var(--m);
+    border-block-end: 1px solid var(--hairline-color);
+  }
 
-    &:hover {
-      @include mixins.disclosure-link-hover-styles;
+  ul li {
+    &.filtered {
+      display: none;
+    }
+
+    & > a:not(.crumb-link),
+    & > .menu-item,
+    & > .menu-option {
+      --focus-ring: var(--inner-focus-ring);
+
+      &:hover {
+        @include mixins.disclosure-link-hover-styles;
+      }
     }
   }
 }
@@ -7537,7 +7683,7 @@ $min2ColWidth: 400px;
     margin-inline-end: 7px;
   }
 
-  .add {
+  .tagselect__input-wrapper {
     position: relative;
     z-index: 1;
     margin-inline: 0 7px;
@@ -7641,7 +7787,8 @@ table.editable {
 .passwordwrapper,
 .border-box,
 .selectize.multiselect .selectize-input,
-.multiselect > select {
+.multiselect > select,
+.CodeMirror {
   @include mixins.input-styles;
 }
 
@@ -7653,7 +7800,7 @@ table.editable {
     @include mixins.input-focused-styles;
   }
 
-  @include mixins.focus-styles {
+  &:focus-visible {
     @include mixins.input-focused-styles;
   }
 }
@@ -7745,14 +7892,35 @@ textarea.text.fullwidth {
   }
 }
 
+.CodeMirror {
+  height: auto !important;
+  min-height: 70px;
+
+  &.CodeMirror-focused {
+    @include mixins.input-focused-styles;
+  }
+
+  &.cm-s-readonly {
+    &,
+    * {
+      cursor: not-allowed;
+    }
+  }
+}
+
 .link-input {
   container-type: inline-size;
 
   & > .flex {
+    & > .flex-grow {
+      overflow: hidden;
+    }
+
     & > div {
       &.text-link {
-        border: 1px solid color.adjust(mixins.$inputColor, $alpha: -0.75);
+        border: var(--input-border);
         border-radius: var(--large-border-radius);
+        background-color: var(--input-bg);
         cursor: text;
 
         &:has(.text:focus) {
@@ -7778,9 +7946,14 @@ textarea.text.fullwidth {
           }
         }
 
-        .chip-content {
-          a {
-            word-break: break-word;
+        .chip {
+          min-height: calc(34rem / 16);
+          padding-inline: var(--s);
+
+          .chip-content {
+            a {
+              word-break: break-word;
+            }
           }
         }
       }
@@ -7846,6 +8019,7 @@ fieldset {
   height: 100%;
   content: '';
   cursor: help;
+  z-index: 1;
 
   &.modified {
     background-color: var(--blue-600);
@@ -7953,11 +8127,10 @@ fieldset {
 }
 
 .field > .instructions,
+.markdown,
   // BC
 .field > .heading > .instructions,
 .checkboxfield .instructions {
-  color: var(--custom-text-color, var(--medium-text-color));
-
   img,
   video,
   embed,
@@ -7978,6 +8151,31 @@ fieldset {
 
   li + li {
     margin-block-start: 0.25em;
+  }
+}
+
+.field > .instructions,
+  // BC
+.field > .heading > .instructions,
+.checkboxfield .instructions {
+  color: var(--custom-text-color, var(--medium-text-color));
+}
+
+// Special adjustments for content formatted via Markdown
+.markdown {
+  color: var(--custom-text-color, var(--text-color));
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    margin-block-end: 0.3em;
+  }
+
+  p {
+    margin-block: 0.25em;
   }
 }
 
@@ -8020,6 +8218,10 @@ fieldset {
   display: flex;
   flex-direction: column;
   gap: calc(5rem / 16);
+
+  .btn.add {
+    max-width: calc(200rem / 16);
+  }
 }
 
 input.checkbox {
@@ -8076,7 +8278,8 @@ div.checkbox {
   }
 
   .info {
-    height: 16px;
+    height: 17px;
+    margin-block-start: -1px;
   }
 }
 
@@ -8124,18 +8327,9 @@ div.checkbox.indeterminate::before {
   text-align: center;
 }
 
-body:not(.reduce-focus-visibility) {
-  input.checkbox:focus + label::before,
-  :focus div.checkbox::before {
-    @include mixins.input-focused-styles;
-  }
-}
-
-body.reduce-focus-visibility {
-  input.checkbox:focus-visible + label::before,
-  :focus-visible div.checkbox::before {
-    @include mixins.input-focused-styles;
-  }
+input.checkbox:focus-visible + label::before,
+:focus-visible div.checkbox::before {
+  @include mixins.input-focused-styles;
 }
 
 .checkbox-icon {
@@ -8159,7 +8353,7 @@ body.reduce-focus-visibility {
 }
 
 .monaco-mouse-cursor-text {
-  @include mixins.focus-styles {
+  &:focus-visible {
     box-shadow: none !important;
   }
 }
@@ -8258,18 +8452,9 @@ div.radio.checked::after,
   background: var(--gray-900);
 }
 
-body:not(.reduce-focus-visibility) {
-  input.radio:focus + label::before,
-  :focus div.radio::before {
-    @include mixins.input-focused-styles;
-  }
-}
-
-body.reduce-focus-visibility {
-  input.radio:focus-visible + label::before,
-  :focus-visible div.radio::before {
-    @include mixins.input-focused-styles;
-  }
+input.radio:focus-visible + label::before,
+:focus-visible div.radio::before {
+  @include mixins.input-focused-styles;
 }
 
 /* multiselect */
@@ -8278,7 +8463,7 @@ body.reduce-focus-visibility {
   font-size: 14px;
   appearance: none;
 
-  @include mixins.focus-styles {
+  &:focus-visible {
     @include mixins.input-focused-styles;
   }
 
@@ -8336,10 +8521,12 @@ td.errors .text,
 .input.errors > .border-box,
 .input.errors > .passwordwrapper,
 .input.errors > .autosuggest-container .text,
+.input.errors > .datetimewrapper .text,
 .text.error {
   border: 1px solid var(--error-color) !important;
 }
 
+.tagselect__input-wrapper,
 .texticon {
   position: relative;
   cursor: text;
@@ -8347,10 +8534,14 @@ td.errors .text,
 
   &.icon {
     &::before {
+      color: var(--ui-control-color);
+    }
+
+    svg,
+    &::before {
       position: absolute;
       inset-block-start: calc(50% - 7rem / 16);
       inset-inline-start: 9px;
-      color: var(--ui-control-color);
     }
   }
 
@@ -8425,6 +8616,18 @@ td.errors .text,
     .clear-btn {
       inset-inline-end: 30px;
     }
+  }
+}
+
+.tagselect__input-wrapper {
+  &.icon.add::before {
+    content: none;
+  }
+
+  svg {
+    width: calc(14rem / 16);
+    height: calc(14rem / 16);
+    fill: var(--ui-control-color);
   }
 }
 
@@ -8635,10 +8838,10 @@ tr.indexingSession td.progress div.progressContainer div.progressInfo {
 
 .select:not(.selectize) select {
   &:hover:not(:disabled) {
-    @include mixins.select-input-focused-styles;
+    @include mixins.select-input-hovered-styles;
   }
 
-  @include mixins.focus-styles {
+  &:focus-visible {
     @include mixins.select-input-focused-styles;
   }
 }
@@ -8751,8 +8954,6 @@ body .selectize-dropdown {
 
     & > .remove {
       position: static;
-      margin-inline: 3px -3px;
-      margin-block: -1px 0;
       border-inline-start: none;
       padding: 0;
       font-size: 0;
@@ -8848,8 +9049,6 @@ body {
   position: fixed;
   inset-block-start: -300px;
   margin-inline-start: 1px;
-  width: 210px;
-  height: 242px;
   z-index: 101 !important;
 }
 
@@ -9059,6 +9258,16 @@ body {
     height: calc(20rem / 16);
     @include mixins.svg-mask(var(--ui-control-color));
   }
+
+  &.small {
+    width: calc(22rem / 16);
+    height: calc(22rem / 16);
+
+    svg {
+      width: calc(14rem / 16);
+      height: calc(14rem / 16);
+    }
+  }
 }
 
 .icon-picker-modal {
@@ -9258,13 +9467,9 @@ body.licensing-issues {
 }
 
 .matrixblock {
-  position: relative;
-  margin-block-end: 10px;
+  margin-block-end: var(--s);
   padding-block: 0 var(--m);
   padding-inline: var(--m);
-  border-radius: var(--large-border-radius);
-  border: 2px solid var(--gray-100);
-  background-color: var(--white);
 
   &.static {
     .titlebar {
@@ -9273,12 +9478,10 @@ body.licensing-issues {
     }
   }
 
-  & > .titlebar > .matrixblock-tabs .pane-tabs .menubtn:not(.action-btn),
-  & > .actions .action-btn {
+  & > .titlebar > .matrixblock-tabs .pane-tabs .menubtn:not(.action-btn) {
     padding: 0;
     width: var(--touch-target-size);
     height: var(--touch-target-size);
-    color: var(--custom-text-color, var(--ui-control-color));
     background-color: transparent;
 
     &:hover {
@@ -9294,6 +9497,7 @@ body.licensing-issues {
   .flex-fields {
     --row-gap: var(--m) !important;
     --padding: var(--m);
+    --neg-padding: calc(var(--m) * -1);
   }
 
   // no margin when a .field comes after a hidden item.
@@ -9309,11 +9513,9 @@ body.licensing-issues {
     margin-block: 0;
     margin-inline: calc(var(--m) * -1);
     box-sizing: border-box;
-    border-radius: calc(var(--large-border-radius) - 2px)
-      calc(var(--large-border-radius) - 2px) 0 0;
+    border-radius: var(--large-border-radius) var(--large-border-radius) 0 0;
     padding-inline: var(--m) calc(var(--m) + 70px);
     padding-block: 5px;
-    color: var(--custom-text-color, var(--light-text-color));
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
@@ -9321,8 +9523,17 @@ body.licensing-issues {
     cursor: default;
     user-select: none;
     position: relative;
-    background-color: var(--gray-050);
+    background-color: var(--custom-titlebar-bg-color, var(--gray-100));
     min-height: calc(var(--lh) + 10px);
+
+    & > .blocktype,
+    & > .preview {
+      font-size: 0.8em !important;
+    }
+
+    & > .blocktype {
+      font-weight: 500;
+    }
 
     & > .preview {
       flex-grow: 1;
@@ -9383,6 +9594,13 @@ body.licensing-issues {
           [role='tab'] {
             background-color: transparent;
 
+            &.sel {
+              background-color: var(
+                --custom-bg-color,
+                var(--gray-050)
+              ) !important;
+            }
+
             .tab-label {
               height: calc(var(--lh) + 10px);
               padding-block: 0;
@@ -9403,13 +9621,6 @@ body.licensing-issues {
 
     & > .preview:first-child:empty + .matrixblock-tabs {
       margin-inline-start: calc((var(--m) + 12px) * -1);
-
-      [role='tab']:first-child {
-        &,
-        .tab-label {
-          border-start-start-radius: calc(var(--large-border-radius) - 2px);
-        }
-      }
     }
   }
 
@@ -9429,7 +9640,7 @@ body.licensing-issues {
 
   &.collapsed {
     & > .titlebar {
-      border-radius: calc(var(--large-border-radius) - 2px);
+      border-radius: var(--large-border-radius);
 
       & > .preview {
         opacity: 1;
@@ -9440,36 +9651,16 @@ body.licensing-issues {
   & > .actions {
     display: flex;
     align-items: center;
-    gap: var(--xs);
+    gap: var(--s);
     position: absolute;
     inset-block-start: 0;
     inset-inline-end: var(--m);
     cursor: default;
     min-height: calc(var(--lh) + 10px);
 
-    & > * {
-      margin: 0 !important;
-    }
-
     & > .status {
       &.off {
         display: none;
-      }
-    }
-
-    a:not([data-action]) {
-      padding: 0;
-      height: var(--touch-target-size);
-      text-align: center;
-      color: var(--dark-hairline-color);
-      transform: color linear 100ms;
-
-      &:hover {
-        color: var(--link-color);
-
-        &.settings::after {
-          border-color: var(--link-color);
-        }
       }
     }
   }
@@ -9483,10 +9674,6 @@ body.licensing-issues {
   & > .fields > .flex-fields > .field {
     &::before {
       display: none;
-    }
-
-    & > .status-badge {
-      inset-inline-start: -2px;
     }
   }
 

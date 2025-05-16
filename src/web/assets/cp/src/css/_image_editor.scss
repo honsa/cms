@@ -382,11 +382,7 @@ html.noscroll body {
   padding-block: 10px;
   padding-inline: 0;
 
-  &:focus {
-    box-shadow: none;
-  }
-
-  @include mixins.focus-styles {
+  &:focus-visible {
     .cursor::after {
       box-shadow: var(--focus-ring);
     }

@@ -94,7 +94,7 @@ Craft.LinkInput = Garnish.Base.extend(
 
       this.reset();
       this.$chip = $(`
-<div class="chip small">
+<div class="chip chromeless">
   <div class="chip-content">
     <a href="${Craft.escapeHtml(value)}" rel="noopener" target="_blank">
       ${Craft.escapeHtml(label)}
@@ -182,17 +182,17 @@ Craft.LinkInput = Garnish.Base.extend(
     initChip: function () {
       const viewAction = this.menu.addItem({
         label: Craft.t('app', 'View in a new tab'),
-        icon: 'share',
+        icon: async () => await Craft.ui.icon('share'),
       });
       const editAction = this.menu.addItem({
         label: Craft.t('app', 'Edit'),
-        icon: 'pencil',
+        icon: async () => await Craft.ui.icon('pencil'),
       });
       this.menu.addHr();
       this.menu.addGroup();
       const removeAction = this.menu.addItem({
         label: 'Remove',
-        icon: 'xmark',
+        icon: async () => await Craft.ui.icon('xmark'),
         destructive: true,
       });
 

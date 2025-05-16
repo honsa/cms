@@ -264,7 +264,7 @@ class Request extends \yii\web\Request
                     }
                     $testBaseCpUrls[] = $this->getBaseUrl() . "/{$this->generalConfig->cpTrigger}";
                 }
-                $siteScore = $siteScore ?? (isset($site) ? $this->_scoreSite($site) : 0);
+                $siteScore ??= isset($site) ? $this->_scoreSite($site) : 0;
                 foreach ($testBaseCpUrls as $testUrl) {
                     $cpScore = $this->_scoreUrl($testUrl);
                     if ($cpScore > $siteScore) {
@@ -430,11 +430,7 @@ class Request extends \yii\web\Request
      */
     public function getSegments(): array
     {
-        if (isset($this->_segments)) {
-            return $this->_segments;
-        }
-
-        return $this->_segments = $this->_segments($this->_path);
+        return $this->_segments ?? ($this->_segments = $this->_segments($this->_path));
     }
 
     /**

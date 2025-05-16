@@ -149,7 +149,7 @@ class EntryType extends Model implements
      * @var ?self The original entry type without an overridden name and handle
      * @since 5.6.0
      */
-    public ?self $original;
+    public ?self $original = null;
 
     /**
      * @inheritdoc
@@ -349,6 +349,7 @@ JS, [
             'section',
             'sectionId',
             'type',
+            'postDate',
         ];
 
         if (!$fieldLayout->validate()) {
@@ -407,7 +408,10 @@ JS, [
      */
     public function getCpEditUrl(): ?string
     {
-        return $this->id ? UrlHelper::cpUrl("settings/entry-types/$this->id") : null;
+        if (!$this->id || !Craft::$app->getUser()->getIsAdmin()) {
+            return null;
+        }
+        return UrlHelper::cpUrl("settings/entry-types/$this->id");
     }
 
     /**

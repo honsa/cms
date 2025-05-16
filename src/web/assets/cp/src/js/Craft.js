@@ -512,14 +512,13 @@ $.extend(Craft, {
 
     // Does the base URL already have a query string?
     qsPos = url.indexOf('?');
+    let baseParams;
     if (qsPos !== -1) {
-      params = $.extend(
-        Object.fromEntries(
-          new URLSearchParams(url.substring(qsPos + 1)).entries()
-        ),
-        params
+      baseParams = Object.fromEntries(
+        new URLSearchParams(url.substring(qsPos + 1)).entries()
       );
       url = url.substring(0, qsPos);
+      params = Object.assign({}, baseParams, params);
     }
 
     if (!Craft.omitScriptNameInUrls && path) {
@@ -530,13 +529,10 @@ $.extend(Craft, {
         }
       } else {
         // Move the path into the query string params
-
-        // Is the path param already set?
-        if (typeof params[Craft.pathParam] !== 'undefined') {
-          let basePath = params[Craft.pathParam].trimEnd();
-          path = basePath + (path ? '/' + path : '');
+        if (baseParams && baseParams[Craft.pathParam] !== undefined) {
+          path =
+            baseParams[Craft.pathParam].trimEnd() + (path ? '/' + path : '');
         }
-
         params[Craft.pathParam] = path;
         path = null;
       }
@@ -1157,15 +1153,13 @@ $.extend(Craft, {
     // Make sure oldData and newData are always strings. This is important because further below String.split is called.
     oldData = typeof oldData === 'string' ? oldData : '';
     newData = typeof newData === 'string' ? newData : '';
-    if (!Array.isArray(deltaNames)) {
-      deltaNames = [];
-    }
-    if (!$.isPlainObject(initialDeltaValues)) {
-      initialDeltaValues = {};
-    }
-    if (!Array.isArray(modifiedDeltaNames)) {
-      modifiedDeltaNames = [];
-    }
+    deltaNames = Array.isArray(deltaNames) ? [...deltaNames] : [];
+    initialDeltaValues = $.isPlainObject(initialDeltaValues)
+      ? initialDeltaValues
+      : {};
+    modifiedDeltaNames = Array.isArray(modifiedDeltaNames)
+      ? [...modifiedDeltaNames]
+      : [];
 
     // Sort the delta namespaces from least -> most specific
     deltaNames.sort((a, b) => {
@@ -1180,13 +1174,13 @@ $.extend(Craft, {
 
     // Group all the old & new params by namespace
     const groupedOldParams = this._groupParamsByDeltaNames(
-      oldData.split('&'),
+      oldData,
       deltaNames,
       false,
       initialDeltaValues
     );
     const groupedNewParams = this._groupParamsByDeltaNames(
-      newData.split('&'),
+      newData,
       deltaNames,
       true,
       false
@@ -1219,19 +1213,16 @@ $.extend(Craft, {
   },
 
   /**
-   * @param {Object} params
+   * @param {string|Object} params
    * @param {Object} deltaNames
-   * @param {boolean} withRoot
-   * @param {(boolean|Object)} initialValues
+   * @param {boolean} [withRoot]
    * @returns {Object}
-   * @private
    */
-  _groupParamsByDeltaNames: function (
-    params,
-    deltaNames,
-    withRoot,
-    initialValues
-  ) {
+  groupParams: function (params, deltaNames, withRoot = false) {
+    if (typeof params === 'string') {
+      params = params.split('&');
+    }
+
     const grouped = {};
 
     if (withRoot) {
@@ -1266,6 +1257,25 @@ $.extend(Craft, {
         grouped.__root__.push(encodeURIComponentExceptEqualChar(param));
       }
     }
+
+    return grouped;
+  },
+
+  /**
+   * @param {string|Object} params
+   * @param {Object} deltaNames
+   * @param {boolean} withRoot
+   * @param {(boolean|Object)} initialValues
+   * @returns {Object}
+   * @private
+   */
+  _groupParamsByDeltaNames: function (
+    params,
+    deltaNames,
+    withRoot,
+    initialValues
+  ) {
+    const grouped = this.groupParams(params, deltaNames, withRoot);
 
     if (initialValues) {
       const serializeParam = (name, value) => {
@@ -2517,7 +2527,7 @@ $.extend(Craft, {
           }
           const $actions = $element
             .find(
-              '> .chip-content .chip-actions,> .card-actions-container .card-actions'
+              '> .chip-content .chip-actions, > .card-titlebar > .card-actions-container .card-actions'
             )
             .detach();
           const $inputs = $element.find('input,button').detach();
@@ -2526,7 +2536,7 @@ $.extend(Craft, {
           if ($actions.length) {
             const $oldStatus = $actions.find('span.status');
             const $newStatus = $replacement.find(
-              '> .chip-content .chip-actions span.status,> .card-actions-container .card-actions span.status'
+              '> .chip-content .chip-actions span.status, > .card-titlebar > .card-actions-container .card-actions span.status'
             );
 
             if (
@@ -2539,7 +2549,7 @@ $.extend(Craft, {
 
             $element
               .find(
-                '> .chip-content .chip-actions,> .card-actions-container .card-actions'
+                '> .chip-content .chip-actions, > .card-titlebar > .card-actions-container .card-actions'
               )
               .replaceWith($actions);
           }
@@ -2607,7 +2617,7 @@ $.extend(Craft, {
     }
 
     const $actions = $(chip).find(
-      '> .chip-content > .chip-actions, > .card-actions-container > .card-actions'
+      '> .chip-content > .chip-actions, > .card-titlebar > .card-actions-container > .card-actions'
     );
     let $actionMenuBtn = $actions.find('.action-btn');
 
@@ -2857,6 +2867,53 @@ $.extend(Craft, {
   useMobileStyles: function () {
     return Garnish.isMobileBrowser() || document.body.clientWidth < 600;
   },
+
+  animate: async function (element, css) {
+    await this.animateAll([[element, css]]);
+  },
+
+  animateAll: function (animations) {
+    return new Promise((resolve, reject) => {
+      for (let i = 0; i < animations.length; i++) {
+        if ((!animations[i][0]) instanceof jQuery) {
+          animations[i][0] = $(animations[i][0]);
+        }
+      }
+
+      if (!document.startViewTransition) {
+        // fallback to Velocity
+        for (let i = 0; i < animations.length; i++) {
+          const [$element, css] = animations[i];
+          $element.velocity(
+            css,
+            Craft.BaseElementSelectInput.REMOVE_FX_DURATION,
+            i === animations.length - 1 ? resolve : null
+          );
+        }
+        return;
+      }
+
+      for (const [$element] of animations) {
+        if ($element.css('view-transition-name') === 'none') {
+          $element.css(
+            'view-transition-name',
+            `vt-${Math.floor(Math.random() * 100000)}`
+          );
+        }
+      }
+
+      const transition = document.startViewTransition(() => {
+        for (const [$element, css] of animations) {
+          $element.css(css);
+        }
+      });
+
+      transition.finished.then(resolve).catch((e) => {
+        console.warn(e);
+        resolve();
+      });
+    });
+  },
 });
 
 // -------------------------------------------
@@ -2878,14 +2935,17 @@ if (typeof BroadcastChannel !== 'undefined') {
 
       case 'trackJobProgress':
         Craft.cp.setJobData(ev.data.jobData);
-
         if (Craft.cp.jobInfo.length) {
           // Check again after a longer delay than usual,
           // as it looks like another browser tab is driving for now
           const delay = Craft.cp.getNextJobDelay() + 1000;
           Craft.cp.trackJobProgress(delay);
         }
+        break;
 
+      case 'copyElements':
+        const elementInfo = Craft.getLocalStorage('copiedElements');
+        Craft.cp.showElementCopyNotification(elementInfo || []);
         break;
     }
   });
@@ -3152,7 +3212,7 @@ $.extend($.fn, {
   datetime: function () {
     return this.each(function () {
       let $wrapper = $(this);
-      let $inputs = $wrapper.find('input:not([name$="[timezone]"])');
+      let $inputs = $wrapper.find('input.text');
       let checkValue = () => {
         let hasValue = false;
         for (let i = 0; i < $inputs.length; i++) {

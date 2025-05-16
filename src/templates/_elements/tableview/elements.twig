@@ -61,7 +61,7 @@
                         }|filter,
                     } %}
                         {%- if (sortable or structureEditable) and not inlineEditing %}
-                            <a class="move icon" title="{{ 'Reorder'|t('app') }}" aria-label="{{ 'Reorder'|t('app') }}" role="button">&nbsp;</a>
+                            <a class="move icon" title="{{ 'Reorder'|t('app') }}">&nbsp;</a>
                         {% endif %}
                         {%- if structure and totalDescendants %}
                             {% set toggleLabel = 'Show {title} children'|t('app', {title: elementTitle}) %}
@@ -75,6 +75,9 @@
                             showLabel: showHeaderColumn,
                             showProvisionalDraftLabel: true,
                             showStatus: showHeaderColumn and not hasStatusCol,
+                            attributes: {
+                                class: ['chromeless'],
+                            }
                         }) %}
                         {% if not showHeaderColumn %}
                             {% set chip = chip|attr({class: 'hide-label'}) %}

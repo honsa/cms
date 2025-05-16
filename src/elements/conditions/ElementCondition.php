@@ -21,7 +21,7 @@ use yii\base\InvalidConfigException;
 class ElementCondition extends BaseCondition implements ElementConditionInterface
 {
     /**
-     * @inerhitdoc
+     * @inheritdoc
      */
     public bool $sortable = false;
 
@@ -69,7 +69,7 @@ class ElementCondition extends BaseCondition implements ElementConditionInterfac
      */
     public function __construct(?string $elementType = null, array $config = [])
     {
-        $elementType = $elementType ?? $config['elementType'] ?? $config['attributes']['elementType'] ?? null;
+        $elementType ??= $config['elementType'] ?? $config['attributes']['elementType'] ?? null;
         unset($config['elementType'], $config['attributes']['elementType']);
 
         if (
@@ -138,12 +138,8 @@ class ElementCondition extends BaseCondition implements ElementConditionInterfac
         // Make sure the rule doesn't conflict with the existing params
         $queryParams = array_merge($this->queryParams);
         foreach ($this->getConditionRules() as $existingRule) {
-            try {
-                /** @var ElementConditionRuleInterface $existingRule */
-                array_push($queryParams, ...$existingRule->getExclusiveQueryParams());
-            } catch (InvalidConfigException) {
-                return false;
-            }
+            /** @var ElementConditionRuleInterface $existingRule */
+            array_push($queryParams, ...$existingRule->getExclusiveQueryParams());
         }
 
         $queryParams = array_flip($queryParams);

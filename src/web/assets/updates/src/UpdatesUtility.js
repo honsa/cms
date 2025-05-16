@@ -240,7 +240,7 @@ import './updates.scss';
 
       disclosureMenu.addItems([
         {
-          icon: 'clipboard',
+          icon: async () => await Craft.ui.icon('clipboard'),
           label: Craft.t('app', 'Copy plugin handle'),
           onActivate: () => {
             Craft.ui.createCopyTextPrompt({
@@ -250,7 +250,7 @@ import './updates.scss';
           },
         },
         {
-          icon: 'clipboard',
+          icon: async () => await Craft.ui.icon('clipboard'),
           label: Craft.t('app', 'Copy package name'),
           onActivate: () => {
             Craft.ui.createCopyTextPrompt({

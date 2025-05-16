@@ -516,6 +516,16 @@ Craft.EditableTable = Garnish.Base.extend(
                 .appendTo($cell);
               break;
 
+            case 'icon':
+              Craft.ui
+                .createIconPicker({
+                  name: name,
+                  value: typeof value !== 'object' ? value : null,
+                  small: true,
+                })
+                .appendTo($cell);
+              break;
+
             case 'color':
               Craft.ui
                 .createColorInput({
@@ -630,8 +640,6 @@ Craft.EditableTable = Garnish.Base.extend(
             $('<a/>', {
               class: 'move icon',
               title: Craft.t('app', 'Reorder'),
-              role: 'button',
-              type: 'button',
             })
           )
           .append($actionsBtn)
@@ -642,12 +650,12 @@ Craft.EditableTable = Garnish.Base.extend(
 
         menu.addItems([
           {
-            icon: 'arrow-up',
+            icon: async () => await Craft.ui.icon('arrow-up'),
             label: Craft.t('app', 'Move up'),
             attributes: {'data-action': 'moveUp'},
           },
           {
-            icon: 'arrow-down',
+            icon: async () => await Craft.ui.icon('arrow-down'),
             label: Craft.t('app', 'Move down'),
             attributes: {'data-action': 'moveDown'},
           },

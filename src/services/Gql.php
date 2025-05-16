@@ -99,7 +99,7 @@ use yii\caching\TagDependency;
 /**
  * GraphQL service.
  *
- * An instance of the service is available via [[\craft\base\ApplicationTrait::getGql()|`Craft::$app->gql`]].
+ * An instance of the service is available via [[\craft\base\ApplicationTrait::getGql()|`Craft::$app->getGql()`]].
  *
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 3.3.0
@@ -1449,9 +1449,7 @@ class Gql extends Component
             $queries = $event->queries;
         }
 
-        TypeLoader::registerType('Query', function() use ($queries) {
-            return call_user_func(Query::class . '::getType', $queries);
-        });
+        TypeLoader::registerType('Query', fn() => call_user_func(Query::class . '::getType', $queries));
     }
 
     /**
@@ -1479,9 +1477,7 @@ class Gql extends Component
             $mutations = $event->mutations;
         }
 
-        TypeLoader::registerType('Mutation', function() use ($mutations) {
-            return call_user_func(Mutation::class . '::getType', $mutations);
-        });
+        TypeLoader::registerType('Mutation', fn() => call_user_func(Mutation::class . '::getType', $mutations));
     }
 
     /**

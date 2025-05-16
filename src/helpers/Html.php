@@ -114,7 +114,7 @@ class Html extends \yii\helpers\Html
             return $html;
         }
 
-        $crawler = new Crawler($html);
+        $crawler = new Crawler("<html><body>$html</body></html>");
 
         $inputContainers = $crawler->filter('.field > .input');
         foreach ($inputContainers as $inputContainer) {
@@ -679,9 +679,7 @@ class Html extends \yii\helpers\Html
     {
         if (!isset(self::$_sortedDataAttributes)) {
             self::$_sortedDataAttributes = array_merge(static::$dataAttributes);
-            usort(self::$_sortedDataAttributes, function(string $a, string $b): int {
-                return strlen($b) - strlen($a);
-            });
+            usort(self::$_sortedDataAttributes, fn(string $a, string $b): int => strlen($b) - strlen($a));
         }
         return self::$_sortedDataAttributes;
     }
@@ -970,7 +968,7 @@ class Html extends \yii\helpers\Html
      * Replaces textareas with markers
      *
      * @param string $html
-     * @return array
+     * @return array<string, string>
      */
     private static function _escapeTextareas(string &$html): array
     {
@@ -1013,8 +1011,7 @@ class Html extends \yii\helpers\Html
      * Replaces markers with textareas.
      *
      * @param string $html
-     * @param array $markers
-     * @return string
+     * @param array<string, string> $markers
      */
     private static function _restoreTextareas(string $html, array $markers): string
     {
@@ -1237,13 +1234,13 @@ class Html extends \yii\helpers\Html
             $svg = file_get_contents($svg);
 
             // This came from a file path, so pretty good chance that the SVG can be trusted.
-            $sanitize = $sanitize ?? false;
-            $namespace = $namespace ?? false;
+            $sanitize ??= false;
+            $namespace ??= false;
         }
 
         // Sanitize and namespace the SVG by default
-        $sanitize = $sanitize ?? true;
-        $namespace = $namespace ?? true;
+        $sanitize ??= true;
+        $namespace ??= true;
 
         // Sanitize?
         if ($sanitize) {

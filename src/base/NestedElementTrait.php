@@ -37,14 +37,9 @@ trait NestedElementTrait
         switch ($handle) {
             case 'owner':
             case 'primaryOwner':
-                /** @var array<NestedElementInterface&self> $sourceElements */
-                $ownerType = $sourceElements[0]->ownerType();
-                if (!$ownerType) {
-                    return false;
-                }
-
+                /** @phpstan-ignore-next-line */
                 return [
-                    'elementType' => $ownerType,
+                    /** @phpstan-ignore-next-line */
                     'map' => array_filter(array_map(function(NestedElementInterface $element) use ($handle) {
                         $ownerId = match ($handle) {
                             'owner' => $element->getOwnerId(),
@@ -75,9 +70,9 @@ trait NestedElementTrait
     private ?int $ownerId = null;
 
     /**
-     * @var class-string<ElementInterface> Owner type
+     * @var class-string<ElementInterface>|null Owner type
      */
-    private string $ownerType;
+    private ?string $ownerType = null;
 
     /**
      * @var int|null Field ID
@@ -105,18 +100,27 @@ trait NestedElementTrait
     public bool $updateSearchIndexForOwner = false;
 
     /**
-     * @var ElementInterface|false The primary owner element, or false if [[primaryOwnerId]] is invalid
+     * @var ElementInterface|false|null The primary owner element, or false if [[primaryOwnerId]] is invalid
      * @see getPrimaryOwner()
      * @see setPrimaryOwner()
      */
-    private ElementInterface|false $_primaryOwner;
+    private ElementInterface|false|null $_primaryOwner = null;
 
     /**
-     * @var ElementInterface|false The owner element, or false if [[ownerId]] is invalid
+     * @var ElementInterface|false|null The owner element, or false if [[ownerId]] is invalid
      * @see getOwner()
      * @see setOwner()
      */
-    private ElementInterface|false $_owner;
+    private ElementInterface|false|null $_owner = null;
+
+    public function __clone(): void
+    {
+        parent::__clone();
+
+        $this->_primaryOwner = null;
+        $this->_owner = null;
+        $this->ownerType = null;
+    }
 
     /**
      * @inheritdoc
@@ -154,6 +158,10 @@ trait NestedElementTrait
     public function setPrimaryOwnerId(?int $id): void
     {
         $this->primaryOwnerId = $id;
+
+        if (!$id || $this->_primaryOwner === false || $this->_primaryOwner?->id !== $id) {
+            $this->_primaryOwner = null;
+        }
     }
 
     /**
@@ -167,10 +175,14 @@ trait NestedElementTrait
                 return null;
             }
 
-            if (isset($this->id, $this->elementQueryResult)) {
+            $sameSiteElements = isset($this->id, $this->elementQueryResult)
+                ? array_filter($this->elementQueryResult, fn(ElementInterface $element) => $element->siteId === $this->siteId)
+                : [];
+
+            if (!empty($sameSiteElements)) {
                 // Eager-load the primary owner for each of the elements in the result,
                 // as we're probably going to end up needing them too
-                Craft::$app->getElements()->eagerLoadElements($this::class, $this->elementQueryResult, [
+                Craft::$app->getElements()->eagerLoadElements($this::class, $sameSiteElements, [
                     [
                         'path' => 'primaryOwner',
                         'criteria' => $this->ownerCriteria(),
@@ -178,6 +190,7 @@ trait NestedElementTrait
                 ]);
             }
 
+            /** @phpstan-ignore-next-line */
             if (!isset($this->_primaryOwner) || $this->_primaryOwner === false) {
                 // Either we didn't try, or the primary owner couldn't be eager-loaded for some reason
                 $ownerType = $this->ownerType();
@@ -221,6 +234,10 @@ trait NestedElementTrait
     public function setOwnerId(?int $id): void
     {
         $this->ownerId = $id;
+
+        if (!$id || $this->_owner === false || $this->_owner?->id !== $id) {
+            $this->_owner = null;
+        }
     }
 
     /**
@@ -239,10 +256,14 @@ trait NestedElementTrait
                 return $this->getPrimaryOwner();
             }
 
-            if (isset($this->id, $this->elementQueryResult)) {
+            $sameSiteElements = isset($this->id, $this->elementQueryResult)
+                ? array_filter($this->elementQueryResult, fn(ElementInterface $element) => $element->siteId === $this->siteId)
+                : [];
+
+            if (!empty($sameSiteElements)) {
                 // Eager-load the owner for each of the elements in the result,
                 // as we're probably going to end up needing them too
-                Craft::$app->getElements()->eagerLoadElements($this::class, $this->elementQueryResult, [
+                Craft::$app->getElements()->eagerLoadElements($this::class, $sameSiteElements, [
                     [
                         'path' => 'owner',
                         'criteria' => $this->ownerCriteria(),
@@ -250,6 +271,7 @@ trait NestedElementTrait
                 ]);
             }
 
+            /** @phpstan-ignore-next-line */
             if (!isset($this->_owner) || $this->_owner === false) {
                 // Either we didn't try, or the owner couldn't be eager-loaded for some reason
                 $ownerType = $this->ownerType();
@@ -302,8 +324,17 @@ trait NestedElementTrait
             return null;
         }
 
-        $field = $this->getOwner()?->getFieldLayout()->getFieldById($this->fieldId)
-            ?? Craft::$app->getFields()->getFieldById($this->fieldId);
+        $field = null;
+
+        try {
+            $field = $this->getOwner()?->getFieldLayout()->getFieldById($this->fieldId);
+        } catch (InvalidConfigException $e) {
+            // carry on as we might still be able to get the field by ID
+        }
+
+        if (!$field) {
+            $field = Craft::$app->getFields()->getFieldById($this->fieldId);
+        }
 
         if (!$field instanceof ElementContainerFieldInterface) {
             throw new InvalidConfigException("Invalid field ID: $this->fieldId");
@@ -441,17 +472,24 @@ trait NestedElementTrait
             $this->sortOrder = $max ? $max + 1 : 1;
         }
 
+        $ownerIds = array_unique([
+            $this->getPrimaryOwnerId(),
+            $ownerId,
+        ]);
+
         if (!$isNew) {
             Db::delete(Table::ELEMENTS_OWNERS, [
                 'elementId' => $this->id,
-                'ownerId' => $ownerId,
+                'ownerId' => $ownerIds,
             ]);
         }
 
-        Db::insert(Table::ELEMENTS_OWNERS, [
-            'elementId' => $this->id,
-            'ownerId' => $ownerId,
-            'sortOrder' => $this->sortOrder,
-        ]);
+        foreach ($ownerIds as $ownerId) {
+            Db::insert(Table::ELEMENTS_OWNERS, [
+                'elementId' => $this->id,
+                'ownerId' => $ownerId,
+                'sortOrder' => $this->sortOrder,
+            ]);
+        }
     }
 }

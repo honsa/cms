@@ -19,6 +19,7 @@ use craft\base\MergeableFieldInterface;
 use craft\base\NestedElementInterface;
 use craft\base\RelationalFieldInterface;
 use craft\base\ThumbableFieldInterface;
+use craft\behaviors\CustomFieldBehavior;
 use craft\behaviors\EventBehavior;
 use craft\db\FixedOrderExpression;
 use craft\db\Query;
@@ -39,6 +40,7 @@ use craft\helpers\ArrayHelper;
 use craft\helpers\Cp;
 use craft\helpers\Db;
 use craft\helpers\ElementHelper;
+use craft\helpers\Html;
 use craft\helpers\Queue;
 use craft\helpers\StringHelper;
 use craft\queue\jobs\LocalizeRelations;
@@ -72,6 +74,11 @@ abstract class BaseRelationField extends Field implements
      * @since 3.4.16
      */
     public const EVENT_DEFINE_SELECTION_CRITERIA = 'defineSelectionCriteria';
+
+    /** @since 5.7.0 */
+    public const DEFAULT_PLACEMENT_BEGINNING = 'beginning';
+    /** @since 5.7.0 */
+    public const DEFAULT_PLACEMENT_END = 'end';
 
     private static bool $validatingRelatedElements = false;
 
@@ -235,6 +242,13 @@ abstract class BaseRelationField extends Field implements
      * @since 4.4.0
      */
     public ?int $branchLimit = null;
+
+    /**
+     * @var string Default placement
+     * @phpstan-var self::DEFAULT_PLACEMENT_*
+     * @since 5.7.0
+     */
+    public string $defaultPlacement = self::DEFAULT_PLACEMENT_END;
 
     /**
      * @var string|null The view mode
@@ -451,6 +465,7 @@ abstract class BaseRelationField extends Field implements
         $attributes[] = 'sources';
         $attributes[] = 'targetSiteId';
         $attributes[] = 'validateRelatedElements';
+        $attributes[] = 'defaultPlacement';
         $attributes[] = 'viewMode';
         $attributes[] = 'showCardsInGrid';
         $attributes[] = 'allowSelfRelations';
@@ -500,6 +515,7 @@ JS, [
                     $view->namespaceInputId('branch-limit-field'),
                     $view->namespaceInputId('min-relations-field'),
                     $view->namespaceInputId('max-relations-field'),
+                    $view->namespaceInputId('default-placement-field'),
                     $view->namespaceInputId('viewMode-field'),
                 ],
         ]);
@@ -535,7 +551,7 @@ JS, [
             $value = $element->getFieldValue($this->handle);
 
             if ($value instanceof ElementQueryInterface) {
-                $value = $this->_all($value, $element);
+                $value = $this->_all($value, $element)->eagerly();
             }
 
             $arrayValidator = new NumberValidator([
@@ -577,7 +593,8 @@ JS, [
             $value
                 ->site('*')
                 ->unique()
-                ->preferSites([$this->targetSiteId($element)]);
+                ->preferSites([$this->targetSiteId($element)])
+                ->eagerly();
         }
 
         $errorCount = 0;
@@ -652,6 +669,8 @@ JS, [
             $value instanceof ElementQueryInterface &&
             $element?->propagating &&
             $element->isNewForSite &&
+            !$element->resaving &&
+            !$element->isNewSite &&
             !$this->targetSiteId &&
             !$this->showSiteMenu
         ) {
@@ -675,10 +694,13 @@ JS, [
             if (!empty($value)) {
                 $query->orderBy([new FixedOrderExpression('elements.id', $value, Craft::$app->getDb())]);
             }
-        } elseif ($value === null && $element?->id && $this->isFirstInstance($element)) {
+        } elseif ($value === null && $element?->id && $this->fetchRelationsFromDbTable($element)) {
             // If $value is null, the element + field haven’t been saved since updating to Craft 5.3+,
-            // or since the field was added to the field layout. So only actually look at the `relations` table
-            // if this is the first instance of the field that was ever added to the field layout.
+            // or since the field was added to the field layout,
+            // or the value was added to not first instance of the field.
+            // So only actually look at the `relations` table
+            // if this is the first instance of the field that was ever added to the field layout
+            // and none of the other instances (which would have been added later on) have a value.
             if (!$this->allowMultipleSources && $this->source) {
                 $source = ElementHelper::findSource($class, $this->source, ElementSources::CONTEXT_FIELD);
 
@@ -688,32 +710,6 @@ JS, [
                 }
             }
 
-            // Make our query customizations via EVENT_BEFORE_PREPARE/EVENT_AFTER_PREPARE,
-            // so they get applied for cloned queries as well
-
-            $query->attachBehavior(sprintf('%s-once', self::class), new EventBehavior([
-                ElementQuery::EVENT_BEFORE_PREPARE => function(CancelableEvent  $event, ElementQuery $query) {
-                    if ($this->maintainHierarchy && $query->id === null) {
-                        $structuresService = Craft::$app->getStructures();
-
-                        $structureElements = (clone($query))
-                            ->select(['**' => '**'])
-                            ->status(null)
-                            ->all();
-
-                        // Fill in any gaps
-                        $structuresService->fillGapsInElements($structureElements);
-
-                        // Enforce the branch limit
-                        if ($this->branchLimit) {
-                            $structuresService->applyBranchLimitToElements($structureElements, $this->branchLimit);
-                        }
-
-                        $query->id(array_map(fn(ElementInterface $element) => $element->id, $structureElements));
-                    }
-                },
-            ], true));
-
             $relationsAlias = sprintf('relations_%s', StringHelper::randomString(10));
 
             $query->attachBehavior(self::class, new EventBehavior([
@@ -721,35 +717,37 @@ JS, [
                     CancelableEvent $event,
                     ElementQuery $query,
                 ) use ($element, $relationsAlias) {
-                    // Make these changes directly on the prepared queries, so `sortOrder` doesn't ever make it into
-                    // the criteria. Otherwise, if the query ends up A) getting executed normally, then B) getting
-                    // eager-loaded with eagerly(), the `orderBy` value referencing the join table will get applied
-                    // to the eager-loading query and cause a SQL error.
-                    foreach ([$query->query, $query->subQuery] as $q) {
-                        $q->innerJoin(
-                            [$relationsAlias => DbTable::RELATIONS],
-                            [
-                                'and',
-                                "[[$relationsAlias.targetId]] = [[elements.id]]",
+                    if ($query->id === null) {
+                        // Make these changes directly on the prepared queries, so `sortOrder` doesn't ever make it into
+                        // the criteria. Otherwise, if the query ends up A) getting executed normally, then B) getting
+                        // eager-loaded with eagerly(), the `orderBy` value referencing the join table will get applied
+                        // to the eager-loading query and cause a SQL error.
+                        foreach ([$query->query, $query->subQuery] as $q) {
+                            $q->innerJoin(
+                                [$relationsAlias => DbTable::RELATIONS],
                                 [
-                                    "$relationsAlias.sourceId" => $element->id,
-                                    "$relationsAlias.fieldId" => $this->id,
-                                ],
-                                [
-                                    'or',
-                                    ["$relationsAlias.sourceSiteId" => null],
-                                    ["$relationsAlias.sourceSiteId" => $element->siteId],
-                                ],
-                            ]
-                        );
+                                    'and',
+                                    "[[$relationsAlias.targetId]] = [[elements.id]]",
+                                    [
+                                        "$relationsAlias.sourceId" => $element->id,
+                                        "$relationsAlias.fieldId" => $this->id,
+                                    ],
+                                    [
+                                        'or',
+                                        ["$relationsAlias.sourceSiteId" => null],
+                                        ["$relationsAlias.sourceSiteId" => $element->siteId],
+                                    ],
+                                ]
+                            );
 
-                        if (
-                            $this->sortable &&
-                            !$this->maintainHierarchy &&
-                            count($query->orderBy ?? []) === 1 &&
-                            ($query->orderBy[0] ?? null) instanceof OrderByPlaceholderExpression
-                        ) {
-                            $q->orderBy(["$relationsAlias.sortOrder" => SORT_ASC]);
+                            if (
+                                $this->sortable &&
+                                !$this->maintainHierarchy &&
+                                count($query->orderBy ?? []) === 1 &&
+                                ($query->orderBy[0] ?? null) instanceof OrderByPlaceholderExpression
+                            ) {
+                                $q->orderBy(["$relationsAlias.sortOrder" => SORT_ASC]);
+                            }
                         }
                     }
                 },
@@ -768,21 +766,39 @@ JS, [
         return $query;
     }
 
-    private function isFirstInstance(?Elementinterface $element): bool
+    private function fetchRelationsFromDbTable(?Elementinterface $element): bool
     {
         if ($this->layoutElement?->uid === null) {
             return false;
         }
 
-        /** @var CustomField|null $first */
-        $first = Collection::make($element?->getFieldLayout()?->getCustomFieldElements())
+        // Get all the instances of this field
+        /** @var Collection<CustomField> $fieldInstances */
+        $fieldInstances = Collection::make($element?->getFieldLayout()?->getCustomFieldElements())
             ->filter(fn(CustomField $layoutElement) => $layoutElement->getField()->id === $this->id)
-            ->sortBy(fn(CustomField $layoutElement) => $layoutElement->dateAdded)
-            ->first();
+            ->sortBy(fn(CustomField $layoutElement) => $layoutElement->dateAdded);
 
-        // Compare handles here rather than UUIDs, since the UUID will change
-        //if we're hot-swapping field layouts (e.g. changing an entry's type).
-        return $this->handle === $first?->getField()->handle;
+        // Only fetch DB relations if this is the first instance
+        // (Compare handles here rather than UUIDs, since the UUID will change
+        // if we're hot-swapping field layouts, e.g. changing an entry's type)
+        /** @var CustomField|null $first */
+        $first = $fieldInstances->shift();
+        if ($this->handle !== $first?->getField()->handle) {
+            return false;
+        }
+
+        // Make sure none of the other instances have values
+        /** @var CustomFieldBehavior $behavior */
+        $behavior = $element->getBehavior('customFields');
+        foreach ($fieldInstances as $fieldInstance) {
+            /** @var self $field */
+            $field = $fieldInstance->getField();
+            if (isset($behavior->{$field->handle})) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -790,6 +806,12 @@ JS, [
      */
     public function serializeValue(mixed $value, ?ElementInterface $element): mixed
     {
+        if ($this->maintainHierarchy) {
+            // Enforce the “Maintain hierarchy” and “Branch Limit” settings
+            $value = $this->normalizeValueForInput($value, $element);
+            return array_map(fn(ElementInterface $element) => $element->id, $value);
+        }
+
         /** @var ElementQueryInterface|ElementCollection $value */
         if ($value instanceof ElementCollection) {
             return $value->ids()->all();
@@ -841,14 +863,9 @@ JS, [
      */
     protected function inputHtml(mixed $value, ?ElementInterface $element, bool $inline): string
     {
-        if ($element !== null && $element->hasEagerLoadedElements($this->handle)) {
-            $value = $element->getEagerLoadedElements($this->handle)->all();
-        } else {
-            /** @var ElementQueryInterface $value */
-            $value = $this->_all($value, $element);
-        }
+        $value = $this->normalizeValueForInput($value, $element, $initialValue);
 
-        /** @var ElementQuery|array $value */
+        /** @var ElementInterface[] $value */
         $variables = $this->inputTemplateVariables($value, $element);
         $variables['inline'] = $inline || $variables['viewMode'] === 'large';
 
@@ -856,7 +873,44 @@ JS, [
             $variables['viewMode'] = 'list';
         }
 
+        if ($initialValue !== null) {
+            // make sure the field gets updated on save, even if it hasn't changed
+            Craft::$app->getView()->setInitialDeltaValue($this->handle, $initialValue);
+        }
+
         return Craft::$app->getView()->renderTemplate($this->inputTemplate, $variables);
+    }
+
+    /**
+     * @param ElementQueryInterface|ElementCollection $value
+     * @param ElementInterface|null $element
+     * @param int[]|null $initialValue
+     * @return ElementInterface[]
+     */
+    private function normalizeValueForInput(mixed $value, ?ElementInterface $element, ?array &$initialValue = null): array
+    {
+        if ($element !== null && $element->hasEagerLoadedElements($this->handle)) {
+            $value = $element->getEagerLoadedElements($this->handle)->all();
+        } else {
+            $value = $this->_all($value, $element)->all();
+        }
+
+        if ($this->maintainHierarchy) {
+            $initialValue = array_map(fn(ElementInterface $element) => $element->id, $value);
+            $structuresService = Craft::$app->getStructures();
+            // Fill in any gaps
+            $structuresService->fillGapsInElements($value);
+            // Enforce the branch limit
+            if ($this->branchLimit) {
+                $structuresService->applyBranchLimitToElements($value, $this->branchLimit);
+            }
+
+            if (count($initialValue) === count($value)) {
+                $initialValue = null;
+            }
+        }
+
+        return $value;
     }
 
     /**
@@ -894,6 +948,18 @@ JS, [
 
         if (empty($value)) {
             return '<p class="light">' . Craft::t('app', 'Nothing selected.') . '</p>';
+        }
+
+        if ($this->maintainHierarchy) {
+            $structuresService = Craft::$app->getStructures();
+            // Fill in any gaps
+            $structuresService->fillGapsInElements($value);
+
+            return Html::beginTag('div', ['class' => 'elementselect']) .
+                Craft::$app->getView()->renderTemplate('_elements/structurelist.twig', [
+                    'elements' => $value,
+                ]) .
+                Html::endTag('div');
         }
 
         $size = Cp::CHIP_SIZE_SMALL;
@@ -992,7 +1058,7 @@ JS, [
                 foreach ($rawValue as $targetElementId) {
                     $map[] = ['source' => $sourceElement->id, 'target' => $targetElementId];
                 }
-            } elseif ($this->isFirstInstance($sourceElement)) {
+            } elseif ($this->fetchRelationsFromDbTable($sourceElement)) {
                 // The relation IDs aren't hardcoded yet and this is the first
                 // instance of this field in the field layout, so fetch the relations
                 // via the DB table
@@ -1036,6 +1102,7 @@ JS, [
             $criteria['orderBy'] = ['structureelements.lft' => SORT_ASC];
         }
 
+        /** @phpstan-ignore-next-line */
         return [
             'elementType' => static::elementType(),
             'map' => $map,
@@ -1091,7 +1158,7 @@ JS, [
      */
     public function afterSave(bool $isNew): void
     {
-        // If the propagation method just changed, resave all the Matrix blocks
+        // If the propagation method just changed, resave all the elements
         if (isset($this->oldSettings)) {
             $oldLocalizeRelations = (bool)($this->oldSettings['localizeRelations'] ?? false);
             if ($this->localizeRelations !== $oldLocalizeRelations) {
@@ -1343,7 +1410,7 @@ JS, [
      */
     protected function settingsTemplateVariables(): array
     {
-        $elementType = $this->elementType();
+        $elementType = static::elementType();
 
         $selectionCondition = $this->getSelectionCondition() ?? $this->createSelectionCondition();
         if ($selectionCondition) {
@@ -1366,6 +1433,7 @@ JS, [
 
         return [
             'field' => $this,
+            'upperElementType' => $elementType::displayName(),
             'elementType' => $elementType::lowerDisplayName(),
             'pluralElementType' => $elementType::pluralLowerDisplayName(),
             'selectionCondition' => $selectionConditionHtml ?? null,
@@ -1375,18 +1443,19 @@ JS, [
     /**
      * Returns an array of variables that should be passed to the input template.
      *
-     * @param array|ElementQueryInterface|null $value
+     * @param ElementInterface[]|ElementQueryInterface|null $value
      * @param ElementInterface|null $element
      * @return array
      */
     protected function inputTemplateVariables(array|ElementQueryInterface $value = null, ?ElementInterface $element = null): array
     {
         if ($value instanceof ElementQueryInterface) {
-            $value = $value->all();
-            ElementHelper::swapInProvisionalDrafts($value);
+            $value = $value->eagerly()->all();
         } elseif (!is_array($value)) {
             $value = [];
         }
+
+        ElementHelper::swapInProvisionalDrafts($value);
 
         if ($this->validateRelatedElements && $element !== null) {
             // Pre-validate related elements
@@ -1444,6 +1513,7 @@ JS, [
             'sourceElementId' => !empty($element->id) ? $element->id : null,
             'disabledElementIds' => $disabledElementIds,
             'limit' => $this->allowLimit ? $this->maxRelations : null,
+            'defaultPlacement' => $this->defaultPlacement,
             'viewMode' => $this->viewMode(),
             'showCardsInGrid' => $this->showCardsInGrid,
             'selectionLabel' => $this->selectionLabel ? Craft::t('site', $this->selectionLabel) : static::defaultSelectionLabel(),

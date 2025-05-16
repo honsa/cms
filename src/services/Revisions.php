@@ -27,7 +27,7 @@ use yii\base\InvalidArgumentException;
 /**
  * Revisions service.
  *
- * An instance of the service is available via [[\craft\base\ApplicationTrait::getRevisions()|`Craft::$app->revisions`]].
+ * An instance of the service is available via [[\craft\base\ApplicationTrait::getRevisions()|`Craft::$app->getRevisions()`]].
  *
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 3.2.0
@@ -95,15 +95,13 @@ class Revisions extends Component
 
         try {
             if (!$force || !$num) {
-                $lastRevisionInfo = Craft::$app->getDb()->usePrimary(function() use ($canonical) {
-                    return (new Query())
-                        ->select(['e.id', 'r.num', 'e.dateCreated'])
-                        ->from(['e' => Table::ELEMENTS])
-                        ->innerJoin(['r' => Table::REVISIONS], '[[r.id]] = [[e.revisionId]]')
-                        ->where(['r.canonicalId' => $canonical->id])
-                        ->orderBy(['r.num' => SORT_DESC])
-                        ->one();
-                });
+                $lastRevisionInfo = Craft::$app->getDb()->usePrimary(fn() => (new Query())
+                    ->select(['e.id', 'r.num', 'e.dateCreated'])
+                    ->from(['e' => Table::ELEMENTS])
+                    ->innerJoin(['r' => Table::REVISIONS], '[[r.id]] = [[e.revisionId]]')
+                    ->where(['r.canonicalId' => $canonical->id])
+                    ->orderBy(['r.num' => SORT_DESC])
+                    ->one());
 
                 if (
                     !$force &&

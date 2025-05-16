@@ -309,7 +309,6 @@ class View extends \yii\web\View
      */
     private array $_assetBundleBuffers = [];
 
-
     /**
      * @var array
      * @see startJsImportBuffer()
@@ -330,10 +329,16 @@ class View extends \yii\web\View
     private array $_html = [];
 
     /**
-     * @var array the registered imports for JavaScript es modules
+     * @var array the registered imports for JavaScript as modules
      * @see registerJsImport()
      */
     private array $_jsImports = [];
+
+    /**
+     * @var string[] The icons that should be registered to the page.
+     * @see registerIcons()
+     */
+    private array $_icons = [];
 
     /**
      * @var callable[][]
@@ -1072,9 +1077,7 @@ class View extends \yii\web\View
      */
     public function registerJsWithVars(callable $jsFn, array $vars, int $position = self::POS_READY, ?string $key = null): void
     {
-        $jsVars = array_map(function($variable) {
-            return Json::encode($variable);
-        }, $vars);
+        $jsVars = array_map(fn($variable) => Json::encode($variable), $vars);
         $js = call_user_func($jsFn, ...array_values($jsVars));
         $this->registerJs($js, $position, $key);
     }
@@ -1460,9 +1463,7 @@ class View extends \yii\web\View
      */
     public function registerScriptWithVars(callable $scriptFn, array $vars, int $position = self::POS_END, array $options = [], ?string $key = null): void
     {
-        $jsVars = array_map(function($variable) {
-            return Json::encode($variable);
-        }, $vars);
+        $jsVars = array_map(fn($variable) => Json::encode($variable), $vars);
 
         $script = call_user_func($scriptFn, ...array_values($jsVars));
         $this->registerScript($script, $position, $options);
@@ -1611,6 +1612,20 @@ $js
 JS;
 
         $this->registerJs($js, self::POS_BEGIN);
+    }
+
+    /**
+     * Registers icons for `Craft.ui.icon()`.
+     *
+     * @param string[] $icons The icons to be registered
+     * @since 5.7.0
+     */
+    public function registerIcons(array $icons): void
+    {
+        $this->_icons = [
+            ...$this->_icons,
+            ...array_flip($icons),
+        ];
     }
 
     /**
@@ -2258,6 +2273,18 @@ JS;
         }
         if (!empty($this->_html[self::POS_END])) {
             $lines[] = implode("\n", $this->_html[self::POS_END]);
+        }
+
+        if (!empty($this->_icons)) {
+            $icons = [];
+            foreach (array_keys($this->_icons) as $icon) {
+                $icons[$icon] = Cp::iconSvg($icon);
+            }
+            $iconsJs = Json::encode($icons);
+            $this->js[self::POS_END][] = <<<JS
+Craft.icons = $iconsJs;
+JS;
+            $this->_icons = [];
         }
 
         $html = parent::renderBodyEndHtml($ajaxMode);

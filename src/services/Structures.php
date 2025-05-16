@@ -25,7 +25,7 @@ use yii\base\Exception;
 /**
  * Structures service.
  *
- * An instance of the service is available via [[\craft\base\ApplicationTrait::getStructures()|`Craft::$app->structures`]].
+ * An instance of the service is available via [[\craft\base\ApplicationTrait::getStructures()|`Craft::$app->getStructures()`]].
  *
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 3.0.0
@@ -169,7 +169,10 @@ class Structures extends Component
                 )
             ) {
                 // Merge in any missing ancestors
-                $ancestorQuery = $element->getAncestors()
+                $ancestorQuery = $element::find()
+                    ->structureId($element->structureId)
+                    ->ancestorOf($element)
+                    ->siteId($element->siteId)
                     ->status(null);
 
                 if ($prevElement) {

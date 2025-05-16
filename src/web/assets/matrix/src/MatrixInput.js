@@ -22,6 +22,7 @@
       $addEntryBtnContainer: null,
       $addEntryBtn: null,
       $addEntryMenuBtn: null,
+      $pasteBtn: null,
       $statusMessage: null,
 
       entrySort: null,
@@ -68,7 +69,8 @@
         const collapsedEntries = Craft.MatrixInput.getCollapsedEntryIds();
 
         this.entrySort = new Garnish.DragSort($entries, {
-          handle: '> .actions > .move',
+          handle: '> .actions > .move-btn',
+          ignoreHandleSelector: null,
           axis: 'y',
           filter: () => {
             // Only return all the selected items if the target item is selected
@@ -114,6 +116,9 @@
         }
 
         this.addListener(this.$addEntryBtn, 'activate', async function () {
+          if (this.$addEntryBtn.hasClass('loading')) {
+            return;
+          }
           this.$addEntryBtn.addClass('loading');
           Craft.cp.announce(Craft.t('app', 'Loading'));
           try {
@@ -164,50 +169,145 @@
             this.destroy();
           }
         });
+
+        Craft.cp.onCopyElements((elementInfo, buttonLabel) => {
+          this.updatePasteBtn(elementInfo);
+          if (this.$pasteBtn && buttonLabel) {
+            this.$pasteBtn.find('.label').text(buttonLabel);
+          }
+        });
       },
 
-      canAddMoreEntries: function () {
+      canAddMoreEntries: function (num = 1) {
+        if (num === 0) {
+          return false;
+        }
+
         return (
           !this.maxEntries ||
-          this.$entriesContainer.children().length < this.maxEntries
+          this.$entriesContainer.children().length + num <= this.maxEntries
         );
+      },
+
+      canPaste(elementInfo) {
+        if (!this.canAddMoreEntries(elementInfo.length)) {
+          return false;
+        }
+
+        for (const e of elementInfo) {
+          if (e.type !== 'craft\\elements\\Entry') {
+            return false;
+          }
+        }
+
+        const entryTypeIds = this.entryTypes.map((entryType) => entryType.id);
+        for (const info of elementInfo) {
+          if (!entryTypeIds.includes(info.data.entryTypeId)) {
+            return false;
+          }
+        }
+
+        return true;
+      },
+
+      async pasteEntries() {
+        Craft.cp.announce(Craft.t('app', 'Loading'));
+        this.$pasteBtn.addClass('loading');
+
+        try {
+          if (this.elementEditor) {
+            // First ensure we're working with drafts for all elements leading up
+            // to this field’s element
+            await this.elementEditor.setFormValue(
+              this.settings.baseInputName,
+              '*'
+            );
+          }
+
+          const newElementInfo = await Craft.cp.pasteElements({
+            primaryOwnerId: this.settings.ownerId,
+            ownerId: this.settings.ownerId,
+            fieldId: this.settings.fieldId,
+            siteId: this.settings.siteId,
+          });
+
+          if (!newElementInfo.length) {
+            return;
+          }
+
+          let data;
+          try {
+            const response = await Craft.sendActionRequest(
+              'POST',
+              'matrix/render-blocks',
+              {
+                data: {
+                  entryIds: newElementInfo.map((info) => info.id),
+                  siteId: this.settings.siteId,
+                  namespace: this.settings.namespace,
+                },
+              }
+            );
+            data = response.data;
+          } catch (e) {
+            Craft.cp.displayError(e?.response?.data?.message);
+            return;
+          }
+
+          // Pause the element editor
+          await this.elementEditor?.pause();
+
+          const $newEntries = $(data.blockHtml);
+          this.$entriesContainer.append($newEntries);
+          await Craft.appendHeadHtml(data.headHtml);
+          await Craft.appendBodyHtml(data.bodyHtml);
+          Craft.initUiElements($newEntries);
+
+          $newEntries.each((i, entry) => {
+            const $entry = $(entry);
+            new Craft.MatrixInput.Entry(this, $entry);
+            this.trigger('entryAdded', {
+              $entry,
+            });
+          });
+
+          this.entrySort.addItems($newEntries);
+          this.entrySelect.addItems($newEntries);
+          this.updateAddEntryBtn();
+          Garnish.firstFocusableElement($newEntries).focus();
+        } finally {
+          this.$pasteBtn.removeClass('loading');
+        }
+
+        // Resume the element editor
+        this.elementEditor?.resume();
       },
 
       updateAddEntryBtn: function () {
         if (this.canAddMoreEntries()) {
           this.$addEntryBtn.removeClass('disabled').removeAttr('aria-disabled');
           this.$addEntryMenuBtn.removeClass('disabled');
-
-          for (let i = 0; i < this.entrySelect.$items.length; i++) {
-            const entry = this.entrySelect.$items.eq(i).data('entry');
-
-            if (entry) {
-              entry.$actionMenu
-                .find('button[data-action=add]')
-                .parent()
-                .removeClass('disabled');
-              entry.$actionMenu
-                .find('button[data-action=add]')
-                .removeAttr('aria-disabled');
-            }
-          }
         } else {
           this.$addEntryBtn.addClass('disabled').attr('aria-disabled', 'true');
           this.$addEntryMenuBtn.addClass('disabled');
+        }
 
-          for (let i = 0; i < this.entrySelect.$items.length; i++) {
-            const entry = this.entrySelect.$items.eq(i).data('entry');
+        this.updatePasteBtn();
+      },
 
-            if (entry) {
-              entry.$actionMenu
-                .find('button[data-action=add]')
-                .parent()
-                .addClass('disabled');
-              entry.$actionMenu
-                .find('button[data-action=add]')
-                .attr('aria-disabled', 'true');
-            }
+      updatePasteBtn: function (elementInfo = null) {
+        elementInfo = elementInfo || Craft.cp.getCopiedElements();
+        if (this.canPaste(elementInfo)) {
+          if (!this.$pasteBtn) {
+            this.$pasteBtn = Craft.ui
+              .createPasteButton()
+              .appendTo(this.$addEntryBtnContainer);
+            this.addListener(this.$pasteBtn, 'activate', 'pasteEntries');
+          } else {
+            this.$pasteBtn.removeClass('hidden');
           }
+        } else {
+          this.$pasteBtn?.addClass('hidden');
         }
       },
 
@@ -227,7 +327,7 @@
         }, 250);
       },
 
-      async addEntry(type, $insertBefore, autofocus) {
+      async addEntry(type, $insertBefore, autofocus = true, params = {}) {
         if (!this.canAddMoreEntries()) {
           this.updateStatusMessage();
           return;
@@ -254,15 +354,18 @@
             'POST',
             'matrix/create-entry',
             {
-              data: {
-                fieldId: this.settings.fieldId,
-                entryTypeId: this.entryTypesByHandle[type].id,
-                ownerId: this.settings.ownerId,
-                ownerElementType: this.settings.ownerElementType,
-                siteId: this.settings.siteId,
-                namespace: this.settings.namespace,
-                staticEntries: this.settings.staticEntries,
-              },
+              data: Object.assign(
+                {
+                  fieldId: this.settings.fieldId,
+                  entryTypeId: this.entryTypesByHandle[type].id,
+                  ownerId: this.settings.ownerId,
+                  ownerElementType: this.settings.ownerElementType,
+                  siteId: this.settings.siteId,
+                  namespace: this.settings.namespace,
+                  staticEntries: this.settings.staticEntries,
+                },
+                params
+              ),
             }
           );
 
@@ -271,7 +374,7 @@
           // Pause the element editor
           await this.elementEditor?.pause();
 
-          if ($insertBefore) {
+          if ($insertBefore?.length) {
             $entry.insertBefore($insertBefore);
           } else {
             $entry.appendTo(this.$entriesContainer);
@@ -285,7 +388,7 @@
           $entry.css(this.getHiddenEntryCss($entry)).velocity(
             {
               opacity: 1,
-              'margin-bottom': 10,
+              'margin-bottom': 8,
             },
             'fast',
             async () => {
@@ -301,7 +404,7 @@
               this.updateAddEntryBtn();
 
               Garnish.requestAnimationFrame(() => {
-                if (typeof autofocus === 'undefined' || autofocus) {
+                if (autofocus) {
                   // Scroll to the entry
                   Garnish.scrollContainerToElement($entry);
                   // Focus on the first focusable element
@@ -348,6 +451,10 @@
 
       deleteSelectedEntries: function () {
         this.callOnSelectedEntries('selfDestruct');
+      },
+
+      duplicateSelectedEntries: function () {
+        this.callOnSelectedEntries('duplicate');
       },
 
       callOnSelectedEntries: function (fn) {
@@ -525,9 +632,9 @@
         this.tabManager = Craft.MatrixInput.initTabs(this.$tabContainer);
       }
 
-      const $actionMenuBtn = this.$container.find('> .actions .action-btn');
+      const $actionMenuBtn = this.$container.find('> .actions > .action-btn');
       const actionDisclosure =
-        $actionMenuBtn.data('trigger') ||
+        $actionMenuBtn.data('disclosureMenu') ||
         new Garnish.DisclosureMenu($actionMenuBtn);
 
       this.$actionMenu = actionDisclosure.$container;
@@ -535,28 +642,46 @@
 
       actionDisclosure.on('show', () => {
         this.$container.addClass('active');
-        if (this.$container.prev('.matrixblock').length) {
-          this.$actionMenu
-            .find('button[data-action=moveUp]:first')
-            .parent()
-            .removeClass('hidden');
+        const hideActions = [];
+
+        if (this.collapsed) {
+          hideActions.push('collapse');
         } else {
-          this.$actionMenu
-            .find('button[data-action=moveUp]:first')
-            .parent()
-            .addClass('hidden');
+          hideActions.push('expand');
         }
-        if (this.$container.next('.matrixblock').length) {
-          this.$actionMenu
-            .find('button[data-action=moveDown]:first')
-            .parent()
-            .removeClass('hidden');
+
+        if (this.$container.hasClass('disabled-entry')) {
+          hideActions.push('disable');
         } else {
-          this.$actionMenu
-            .find('button[data-action=moveDown]:first')
-            .parent()
-            .addClass('hidden');
+          hideActions.push('enable');
         }
+
+        if (!this.$container.prev('.matrixblock').length) {
+          hideActions.push('moveUp');
+        }
+
+        if (!this.$container.next('.matrixblock').length) {
+          hideActions.push('moveDown');
+        }
+
+        if (!this.matrix.canAddMoreEntries()) {
+          hideActions.push('add');
+        }
+
+        const $buttons = this.$actionMenu.find('button[data-action]');
+        const $hideButtons = hideActions.length
+          ? $buttons.filter(
+              hideActions.map((a) => `[data-action=${a}]`).join(',')
+            )
+          : $();
+
+        const disclosureMenu = this.$actionMenu.data('disclosureMenu');
+        $hideButtons.each((i, button) => {
+          disclosureMenu.hideItem(button);
+        });
+        $buttons.not($hideButtons).each((i, button) => {
+          disclosureMenu.showItem(button);
+        });
       });
 
       actionDisclosure.on('hide', () => {
@@ -624,15 +749,16 @@
           let value;
 
           if ($input.hasClass('label')) {
-            const $maybeLightswitchContainer = $input.parent().parent();
-
+            const $lightswitch = $input.closest('.lightswitch');
             if (
-              $maybeLightswitchContainer.hasClass('lightswitch') &&
-              (($maybeLightswitchContainer.hasClass('on') &&
-                $input.hasClass('off')) ||
-                (!$maybeLightswitchContainer.hasClass('on') &&
-                  $input.hasClass('on')))
+              $lightswitch.length &&
+              (($lightswitch.hasClass('on') && $input.hasClass('off')) ||
+                (!$lightswitch.hasClass('on') && $input.hasClass('on')))
             ) {
+              continue;
+            }
+
+            if ($input.closest('button[aria-pressed=false]').length) {
               continue;
             }
 
@@ -671,25 +797,14 @@
 
       if (animate && !Garnish.prefersReducedMotion()) {
         this.$fieldsContainer.velocity('fadeOut', {duration: 'fast'});
-        this.$container.velocity({height: 34}, 'fast');
+        this.$container.velocity({height: 30}, 'fast');
       } else {
         this.$previewContainer.show();
         this.$fieldsContainer.hide();
-        this.$container.css({height: 34});
+        this.$container.css({height: 30});
       }
 
       this.$tabContainer.hide();
-
-      setTimeout(() => {
-        this.$actionMenu
-          .find('button[data-action=collapse]:first')
-          .parent()
-          .addClass('hidden');
-        this.$actionMenu
-          .find('button[data-action=expand]:first')
-          .parent()
-          .removeClass('hidden');
-      }, 200);
 
       // Remember that?
       if (!this.isNew) {
@@ -766,17 +881,6 @@
         }
       );
 
-      setTimeout(() => {
-        this.$actionMenu
-          .find('button[data-action=collapse]:first')
-          .parent()
-          .removeClass('hidden');
-        this.$actionMenu
-          .find('button[data-action=expand]:first')
-          .parent()
-          .addClass('hidden');
-      }, 200);
-
       // Remember that?
       if (!this.isNew && typeof Storage !== 'undefined') {
         const collapsedEntries = Craft.MatrixInput.getCollapsedEntryIds();
@@ -800,35 +904,12 @@
     disable: function () {
       this.$container.children('input[name$="[enabled]"]:first').val('');
       this.$container.addClass('disabled-entry');
-
-      setTimeout(() => {
-        this.$actionMenu
-          .find('button[data-action=disable]:first')
-          .parent()
-          .addClass('hidden');
-        this.$actionMenu
-          .find('button[data-action=enable]:first')
-          .parent()
-          .removeClass('hidden');
-      }, 200);
-
       this.collapse(true);
     },
 
     enable: function () {
       this.$container.children('input[name$="[enabled]"]:first').val('1');
       this.$container.removeClass('disabled-entry');
-
-      setTimeout(() => {
-        this.$actionMenu
-          .find('button[data-action=disable]:first')
-          .parent()
-          .removeClass('hidden');
-        this.$actionMenu
-          .find('button[data-action=enable]:first')
-          .parent()
-          .addClass('hidden');
-      }, 200);
     },
 
     moveUp: function () {
@@ -856,6 +937,14 @@
       }
       this.matrix.trigger('moveEntryDown', {
         entry: this,
+      });
+    },
+
+    duplicate: function () {
+      const type = this.$container.data('type');
+      const elementEditor = this.matrix.elementEditor;
+      this.matrix.addEntry(type, this.$container.next('.matrixblock'), true, {
+        duplicate: elementEditor?.getDraftElementId(this.id) || this.id,
       });
     },
 
@@ -925,6 +1014,55 @@
         case 'add': {
           const type = $option.data('type');
           this.matrix.addEntry(type, this.$container);
+          break;
+        }
+
+        case 'duplicate': {
+          if (batchAction) {
+            this.matrix.duplicateSelectedEntries();
+          } else {
+            this.duplicate();
+          }
+
+          break;
+        }
+
+        case 'copy': {
+          let elementInfo = [];
+          if (batchAction) {
+            let selectedItems = this.matrix.entrySelect.getSelectedItems();
+            for (let i = 0; i < selectedItems.length; i++) {
+              let entry = $(selectedItems[i]).data('entry');
+
+              elementInfo.push({
+                type: 'craft\\elements\\Entry',
+                id:
+                  entry.matrix.elementEditor?.getDraftElementId(entry.id) ||
+                  entry.id,
+                draftId: entry.$container.data('draftId'),
+                revisionId: entry.$container.data('revisionId'),
+                fieldId: entry.matrix.settings.fieldId,
+                ownerId: entry.matrix.settings.ownerId,
+                siteId: entry.matrix.settings.siteId,
+              });
+            }
+          } else {
+            elementInfo = [
+              {
+                type: 'craft\\elements\\Entry',
+                id:
+                  this.matrix.elementEditor?.getDraftElementId(this.id) ||
+                  this.id,
+                draftId: this.$container.data('draftId'),
+                revisionId: this.$container.data('revisionId'),
+                fieldId: this.matrix.settings.fieldId,
+                ownerId: this.matrix.settings.ownerId,
+                siteId: this.matrix.settings.siteId,
+              },
+            ];
+          }
+
+          Craft.cp.copyElements(elementInfo);
           break;
         }
 

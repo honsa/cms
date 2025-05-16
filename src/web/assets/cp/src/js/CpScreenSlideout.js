@@ -17,6 +17,7 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
     $header: null,
     $toolbar: null,
     $tabContainer: null,
+    $extraToolbarItems: null,
     $loadSpinner: null,
     $actionBtn: null,
     $editLink: null,
@@ -308,6 +309,7 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
         }
 
         this.updateTabs(data.tabs);
+        this.updateExtraToolbarItems(data.extraToolbarItems);
 
         if (data.formAttributes) {
           Craft.setElementAttributes(this.$container, data.formAttributes);
@@ -399,8 +401,8 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
             Craft.cp.elementThumbLoader.load(this.$sidebar);
           }
 
-          if (!Garnish.isMobileBrowser()) {
-            Craft.setFocusWithin(this.$content);
+          if (!Garnish.isMobileBrowser() && !this.isOpening) {
+            this.setFocusWithin();
           }
 
           resolve();
@@ -408,6 +410,10 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
           this.settings.onLoad();
         });
       });
+    },
+
+    setFocusWithin: function () {
+      Craft.setFocusWithin(this.$content);
     },
 
     updateTabs: function (tabs) {
@@ -433,6 +439,19 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
           this.$body.trigger('scroll');
         });
       }
+    },
+
+    updateExtraToolbarItems: function (toolbar) {
+      if (this.$extraToolbarItems) {
+        this.$extraToolbarItems.remove();
+        this.$extraToolbarItems = null;
+      }
+
+      if (!toolbar) {
+        return;
+      }
+
+      this.$extraToolbarItems = $(toolbar).insertAfter(this.$tabContainer);
     },
 
     showSidebar: function (focus = true) {

@@ -133,6 +133,16 @@ Craft.CustomizeSourcesModal = Garnish.Modal.extend({
     this.sourceSort = new Garnish.DragSort({
       handle: '.move',
       axis: 'y',
+      filter: () => {
+        // If a heading is being dragged, also include the following sources
+        if (this.sourceSort.$targetItem.hasClass('heading')) {
+          return this.sourceSort.$targetItem.add(
+            this.sourceSort.$targetItem.nextUntil('.heading')
+          );
+        } else {
+          return this.sourceSort.$targetItem;
+        }
+      },
     });
 
     // Create the sources

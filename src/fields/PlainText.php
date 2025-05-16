@@ -193,12 +193,23 @@ class PlainText extends Field implements InlineEditableFieldInterface, SortableF
      */
     protected function inputHtml(mixed $value, ?ElementInterface $element, bool $inline): string
     {
+        return $this->_inputHtml($value, $element, false);
+    }
+
+    public function getStaticHtml(mixed $value, ElementInterface $element): string
+    {
+        return $this->_inputHtml($value, $element, true);
+    }
+
+    private function _inputHtml(mixed $value, ?ElementInterface $element, bool $static): string
+    {
         return Craft::$app->getView()->renderTemplate('_components/fieldtypes/PlainText/input.twig', [
             'name' => $this->handle,
             'value' => $value,
             'field' => $this,
             'placeholder' => $this->placeholder !== null ? Craft::t('site', StringHelper::unescapeShortcodes($this->placeholder)) : null,
             'orientation' => $this->getOrientation($element),
+            'disabled' => $static,
         ]);
     }
 
@@ -221,8 +232,11 @@ class PlainText extends Field implements InlineEditableFieldInterface, SortableF
      */
     public function serializeValue(mixed $value, ?ElementInterface $element): mixed
     {
-        if ($value !== null && !Craft::$app->getDb()->getSupportsMb4()) {
-            $value = StringHelper::emojiToShortcodes(StringHelper::escapeShortcodes($value));
+        if ($value !== null) {
+            $value = StringHelper::escapeShortcodes($value);
+            if (!Craft::$app->getDb()->getSupportsMb4()) {
+                $value = StringHelper::emojiToShortcodes($value);
+            }
         }
         return $value;
     }

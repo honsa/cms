@@ -16,6 +16,7 @@ use craft\base\NestedElementInterface;
 use craft\config\GeneralConfig;
 use craft\db\Query;
 use craft\db\Table;
+use craft\elements\Entry;
 use craft\errors\OperationAbortedException;
 use craft\fieldlayoutelements\CustomField;
 use craft\i18n\Locale;
@@ -1014,6 +1015,17 @@ class ElementHelper
             sprintf('%s/%s', $generalConfig->partialTemplatesPath, $refHandle),
         ];
 
+        // todo: make this better in 5.8
+        if ($element instanceof Entry) {
+            $entryType = $element->getType();
+            if (isset($entryType->original) && $entryType->original->handle !== $entryType->handle) {
+                array_unshift(
+                    $templates,
+                    sprintf('%s/%s/%s', $generalConfig->partialTemplatesPath, $refHandle, $entryType->original->handle),
+                );
+            }
+        }
+
         $providerHandle = $element->getFieldLayout()?->provider?->getHandle();
         if ($providerHandle !== null) {
             array_unshift($templates, sprintf('%s/%s/%s', $generalConfig->partialTemplatesPath, $refHandle, $providerHandle));
@@ -1042,7 +1054,12 @@ class ElementHelper
             return;
         }
 
-        $canonicalElements = array_filter($elements, fn(ElementInterface $element) => $element->getIsCanonical());
+        // filter out drafts and revisions
+        // (don't just exclude derivative elements though! see https://github.com/craftcms/cms/issues/16626)
+        $canonicalElements = array_filter(
+            $elements,
+            fn(ElementInterface $element) => !$element->getIsDraft() && !$element->getIsRevision(),
+        );
 
         if (empty($canonicalElements)) {
             return;

@@ -30,6 +30,7 @@ use craft\fieldlayoutelements\CustomField;
 use craft\fields\Addresses as AddressesField;
 use craft\fields\Assets as AssetsField;
 use craft\fields\BaseRelationField;
+use craft\fields\ButtonGroup;
 use craft\fields\Categories as CategoriesField;
 use craft\fields\Checkboxes;
 use craft\fields\Color;
@@ -39,6 +40,7 @@ use craft\fields\Dropdown;
 use craft\fields\Email;
 use craft\fields\Entries as EntriesField;
 use craft\fields\Icon;
+use craft\fields\Json;
 use craft\fields\Lightswitch;
 use craft\fields\Link;
 use craft\fields\Matrix as MatrixField;
@@ -58,7 +60,7 @@ use craft\helpers\ArrayHelper;
 use craft\helpers\Component as ComponentHelper;
 use craft\helpers\Cp;
 use craft\helpers\Db;
-use craft\helpers\Json;
+use craft\helpers\Json as JsonHelper;
 use craft\helpers\ProjectConfig as ProjectConfigHelper;
 use craft\helpers\StringHelper;
 use craft\models\FieldLayout;
@@ -76,7 +78,7 @@ use yii\web\BadRequestHttpException;
 /**
  * Fields service.
  *
- * An instance of the service is available via [[\craft\base\ApplicationTrait::getFields()|`Craft::$app->fields`]].
+ * An instance of the service is available via [[\craft\base\ApplicationTrait::getFields()|`Craft::$app->getFields()`]].
  *
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 3.0.0
@@ -222,6 +224,7 @@ class Fields extends Component
         $fieldTypes = [
             AddressesField::class,
             AssetsField::class,
+            ButtonGroup::class,
             CategoriesField::class,
             Checkboxes::class,
             Color::class,
@@ -231,6 +234,7 @@ class Fields extends Component
             Email::class,
             EntriesField::class,
             Icon::class,
+            Json::class,
             Lightswitch::class,
             Link::class,
             MatrixField::class,
@@ -302,6 +306,7 @@ class Fields extends Component
         }
 
         // Make sure the current field class is in there if it's supposed to be
+        /** @var FieldInterface $field */
         if ($includeCurrent && !in_array(get_class($field), $types, true)) {
             $types[] = get_class($field);
         }
@@ -895,7 +900,7 @@ class Fields extends Component
                 if (array_key_exists('config', $config)) {
                     $nestedConfig = ArrayHelper::remove($config, 'config');
                     if ($nestedConfig) {
-                        $config += is_string($nestedConfig) ? Json::decode($nestedConfig) : $nestedConfig;
+                        $config += is_string($nestedConfig) ? JsonHelper::decode($nestedConfig) : $nestedConfig;
                     }
                     $loadTabs = false;
                 } else {
@@ -947,13 +952,13 @@ class Fields extends Component
             if (array_key_exists('settings', $tabResult)) {
                 $settings = ArrayHelper::remove($tabResult, 'settings');
                 if ($settings) {
-                    $tabResult += Json::decode($settings);
+                    $tabResult += JsonHelper::decode($settings);
                 }
             }
 
             $elements = ArrayHelper::remove($tabResult, 'elements');
             if ($elements) {
-                $elements = Json::decode($elements);
+                $elements = JsonHelper::decode($elements);
             } else {
                 // old school
                 $elements = [];
@@ -1035,12 +1040,16 @@ class Fields extends Component
      * Returns a field layout by its associated element type.
      *
      * @param class-string<ElementInterface> $type The associated element type
-     * @return FieldLayout The field layout
+     * @param bool $create Whether to create a field layout if one doesn’t exist
+     * @return FieldLayout|null The field layout
      */
-    public function getLayoutByType(string $type): FieldLayout
+    public function getLayoutByType(string $type, bool $create = true): ?FieldLayout
     {
-        return $this->_layouts()->firstWhere('type', $type)
-            ?? new FieldLayout(['type' => $type]);
+        $layout = $this->_layouts()->firstWhere('type', $type);
+        if (!$layout && $create) {
+            return new FieldLayout(['type' => $type]);
+        }
+        return $layout;
     }
 
     /**
@@ -1101,7 +1110,7 @@ class Fields extends Component
     public function assembleLayoutFromPost(?string $namespace = null): FieldLayout
     {
         $paramPrefix = $namespace ? rtrim($namespace, '.') . '.' : '';
-        $config = Json::decode(Craft::$app->getRequest()->getBodyParam($paramPrefix . 'fieldLayout'));
+        $config = JsonHelper::decode(Craft::$app->getRequest()->getBodyParam($paramPrefix . 'fieldLayout'));
         $cardView = Craft::$app->getRequest()->getBodyParam($paramPrefix . 'cardView');
         $config['cardView'] = empty($cardView) ? null : $cardView;
         $layout = $this->createLayout($config);
@@ -1346,7 +1355,7 @@ class Fields extends Component
         $oldField = !$isNewField ? $this->getFieldById($fieldRecord->id) : null;
 
         // For control panel save requests, make sure we have all the custom data already saved on the object.
-        $field = $this->_savingFields[$fieldUid] ?? $oldField;
+        $field = $this->_savingFields[$fieldUid] ?? null;
 
         // Fire a 'beforeApplyFieldSave' event
         if ($this->hasEventHandlers(self::EVENT_BEFORE_APPLY_FIELD_SAVE)) {
@@ -1403,14 +1412,16 @@ class Fields extends Component
         // Tell the current CustomFieldBehavior class about the field
         CustomFieldBehavior::$fieldHandles[$fieldRecord->handle] = true;
 
-        if ($isNewField || $field === null) {
-            // Try fetching the field again, if it didn’t exist to begin with
-            $field ??= $this->getFieldById($fieldRecord->id);
+        // Now get the field, if it's not a field save request
+        $field ??= $this->getFieldById($fieldRecord->id);
+        if ($isNewField) {
             $field->id = $fieldRecord->id;
-        } else {
-            // Save the old field handle and settings on the model in case the field type needs to do something with it.
+        }
+
+        if (!$isNewField) {
+            // Set the old field handle and settings on the model in case the field type needs to do something with it
             $field->oldHandle = $fieldRecord->getOldHandle();
-            $field->oldSettings = is_string($oldSettings) ? Json::decode($oldSettings) : null;
+            $field->oldSettings = is_string($oldSettings) ? JsonHelper::decode($oldSettings) : null;
         }
 
         $field->afterSave($isNewField);

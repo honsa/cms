@@ -8,7 +8,6 @@
 namespace craft\web\twig;
 
 use CommerceGuys\Addressing\Formatter\FormatterInterface;
-use Countable;
 use Craft;
 use craft\base\ElementInterface;
 use craft\base\FieldLayoutProviderInterface;
@@ -124,6 +123,7 @@ class Extension extends AbstractExtension implements GlobalsInterface
                 'exec',
                 'file_get_contents',
                 'file_put_contents',
+                'popen',
             ])
         ) {
             throw new RuntimeError(sprintf('The "%s" %s does not support passing "%s".', $thing, $type, $arrow));
@@ -310,48 +310,19 @@ class Extension extends AbstractExtension implements GlobalsInterface
     public function getTests(): array
     {
         return [
-            new TwigTest('array', function($obj): bool {
-                return is_array($obj);
-            }),
-            new TwigTest('boolean', function($obj): bool {
-                return is_bool($obj);
-            }),
-            new TwigTest('callable', function($obj): bool {
-                return is_callable($obj);
-            }),
-            new TwigTest('countable', function($obj): bool {
-                if (!function_exists('is_countable')) {
-                    return is_array($obj) || $obj instanceof Countable;
-                }
-                return is_countable($obj);
-            }),
-            new TwigTest('float', function($obj): bool {
-                return is_float($obj);
-            }),
-            new TwigTest('instance of', function($obj, $class) {
-                return $obj instanceof $class;
-            }),
-            new TwigTest('integer', function($obj): bool {
-                return is_int($obj);
-            }),
-            new TwigTest('missing', function($obj) {
-                return $obj instanceof MissingComponentInterface;
-            }),
-            new TwigTest('numeric', function($obj): bool {
-                return is_numeric($obj);
-            }),
-            new TwigTest('object', function($obj): bool {
-                return is_object($obj);
-            }),
-            new TwigTest('resource', function($obj): bool {
-                return is_resource($obj);
-            }),
-            new TwigTest('scalar', function($obj): bool {
-                return is_scalar($obj);
-            }),
-            new TwigTest('string', function($obj): bool {
-                return is_string($obj);
-            }),
+            new TwigTest('array', fn($obj): bool => is_array($obj)),
+            new TwigTest('boolean', fn($obj): bool => is_bool($obj)),
+            new TwigTest('callable', fn($obj): bool => is_callable($obj)),
+            new TwigTest('countable', fn($obj): bool => is_countable($obj)),
+            new TwigTest('float', fn($obj): bool => is_float($obj)),
+            new TwigTest('instance of', fn($obj, $class) => $obj instanceof $class),
+            new TwigTest('integer', fn($obj): bool => is_int($obj)),
+            new TwigTest('missing', fn($obj) => $obj instanceof MissingComponentInterface),
+            new TwigTest('numeric', fn($obj): bool => is_numeric($obj)),
+            new TwigTest('object', fn($obj): bool => is_object($obj)),
+            new TwigTest('resource', fn($obj): bool => is_resource($obj)),
+            new TwigTest('scalar', fn($obj): bool => is_scalar($obj)),
+            new TwigTest('string', fn($obj): bool => is_string($obj)),
         ];
     }
 
@@ -936,9 +907,7 @@ class Extension extends AbstractExtension implements GlobalsInterface
     {
         try {
             $oldClasses = Html::parseTagAttributes($tag)['class'] ?? [];
-            $newClasses = array_filter($oldClasses, function(string $oldClass) use ($class) {
-                return is_string($class) ? $oldClass !== $class : !in_array($oldClass, $class, true);
-            });
+            $newClasses = array_filter($oldClasses, fn(string $oldClass) => is_string($class) ? $oldClass !== $class : !in_array($oldClass, $class, true));
 
             $newTag = Html::modifyTagAttributes($tag, ['class' => false]);
             if (!empty($newClasses)) {
@@ -963,6 +932,10 @@ class Extension extends AbstractExtension implements GlobalsInterface
      */
     public function replaceFilter(mixed $str, mixed $search, mixed $replace = null, ?bool $regex = null): mixed
     {
+        if ($str === null) {
+            return '';
+        }
+
         if ($search instanceof Traversable) {
             $search = iterator_to_array($search);
         }
@@ -1266,7 +1239,7 @@ class Extension extends AbstractExtension implements GlobalsInterface
     public function indexOfFilter(mixed $haystack, mixed $needle, ?int $default = -1): ?int
     {
         if (is_string($haystack)) {
-            $index = strpos($haystack, $needle);
+            $index = strpos($haystack, (string) $needle);
         } elseif (is_array($haystack)) {
             $index = array_search($needle, $haystack, false);
         } elseif (is_object($haystack) && $haystack instanceof IteratorAggregate) {

@@ -19,23 +19,16 @@ Craft.EntryTypeSelectInput = Craft.ComponentSelectInput.extend(
         const disclosureMenu = this.getDisclosureMenu($component);
         const $editBtn = disclosureMenu.$container.find('[data-edit-action]');
         if ($editBtn.length) {
-          const $ul = $editBtn.closest('ul');
-          $editBtn.closest('li').remove();
-          if ($ul.find('li').length === 0) {
-            $ul.remove();
-          }
+          disclosureMenu.hideItem($editBtn[0]);
         }
         Craft.addActionsToChip(
           $component,
           [
             {
-              icon: 'gear',
+              icon: async () => await Craft.ui.icon('gear'),
               label: Craft.t('app', 'Settings'),
               callback: () => {
                 this.createSettings($component);
-              },
-              attributes: {
-                'data-edit-action': true,
               },
             },
           ],

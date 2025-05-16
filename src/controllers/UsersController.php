@@ -262,9 +262,10 @@ class UsersController extends Controller
                         $authService->setUser(null);
                         throw new InvalidConfigException('User requires two-step verification, but the loginPath config setting is disabled.');
                     }
-                    return $this->redirect(UrlHelper::siteUrl($loginPath, [
+                    return $this->redirect(UrlHelper::siteUrl($loginPath, array_filter([
                         'verify' => 1,
-                    ]));
+                        'returnUrl' => $this->getPostedRedirectUrl($user),
+                    ])));
                 }
 
                 return $this->runAction('auth-form');
@@ -274,7 +275,7 @@ class UsersController extends Controller
         // if we're impersonating, pass the user we're impersonating to the complete method
         $impersonator = $userSession->getImpersonator();
         if ($impersonator !== null) {
-            $user = $impersonator;
+            $user = Craft::$app->getUser()->getIdentity();
         }
 
         return $this->_completeLogin($user, $duration);
@@ -691,9 +692,7 @@ class UsersController extends Controller
             $this->_randomlyDelayResponse(microtime(true) - $time);
 
             if (!empty($errors)) {
-                $list = implode("\n", array_map(function(string $error) {
-                    return sprintf('- %s', $error);
-                }, $errors));
+                $list = implode("\n", array_map(fn(string $error) => sprintf('- %s', $error), $errors));
                 Craft::warning(sprintf("Password reset email not sent:\n%s", $list), __METHOD__);
                 $errors = [];
             }
@@ -1138,9 +1137,10 @@ class UsersController extends Controller
         $response = $this->asEditUserScreen($user, self::SCREEN_ADDRESSES);
 
         $response->contentHtml(function() use ($user) {
+            $canEditUsers = Craft::$app->getUser()->checkPermission('editUsers');
             $config = [
                 'showInGrid' => true,
-                'canCreate' => Craft::$app->getUser()->checkPermission('editUsers'),
+                'canCreate' => $canEditUsers,
             ];
 
             // Use an element index view if there's more than 50 addresses
@@ -1319,7 +1319,6 @@ class UsersController extends Controller
             'language' => $this->request->getBodyParam('preferredLanguage', $user->getPreference('language')),
             'locale' => $preferredLocale,
             'weekStartDay' => $this->request->getBodyParam('weekStartDay', $user->getPreference('weekStartDay')),
-            'alwaysShowFocusRings' => (bool)$this->request->getBodyParam('alwaysShowFocusRings', $user->getPreference('alwaysShowFocusRings')),
             'useShapes' => (bool)$this->request->getBodyParam('useShapes', $user->getPreference('useShapes')),
             'underlineLinks' => (bool)$this->request->getBodyParam('underlineLinks', $user->getPreference('underlineLinks')),
             'disableAutofocus' => $this->request->getBodyParam('disableAutofocus', $user->getPreference('disableAutofocus')),
@@ -1442,6 +1441,7 @@ JS);
     {
         $this->getView()->registerAssetBundle(AuthMethodSetupAsset::class);
 
+        $this->response->setNoCacheHeaders();
         return $this->renderTemplate('_special/setup-2fa.twig', templateMode: View::TEMPLATE_MODE_CP);
     }
 
@@ -1531,7 +1531,7 @@ JS);
                 }
             }
 
-            $user = $user ?? new User();
+            $user ??= new User();
         }
 
         $isCurrentUser = $user->getIsCurrent();
@@ -2447,11 +2447,15 @@ JS);
             $view->setTemplateMode($templateMode);
         }
 
-        if ($this->request->getIsCpRequest()) {
-            // explicitly set the default return URL here, since checkPermission('accessCp') will be false
-            $defaultReturnUrl = UrlHelper::cpUrl(Craft::$app->getConfig()->getGeneral()->getPostCpLoginRedirect());
-        } else {
-            $defaultReturnUrl = UrlHelper::siteUrl(Craft::$app->getConfig()->getGeneral()->getPostLoginRedirect());
+        $returnUrl = $this->request->getQueryParam('returnUrl');
+        if (!$returnUrl) {
+            if ($this->request->getIsCpRequest()) {
+                // explicitly set the default return URL here, since checkPermission('accessCp') will be false
+                $defaultReturnUrl = UrlHelper::cpUrl(Craft::$app->getConfig()->getGeneral()->getPostCpLoginRedirect());
+            } else {
+                $defaultReturnUrl = UrlHelper::siteUrl(Craft::$app->getConfig()->getGeneral()->getPostLoginRedirect());
+            }
+            $returnUrl = $userSession->getReturnUrl($defaultReturnUrl);
         }
 
         $authFormData = [
@@ -2461,7 +2465,7 @@ JS);
                 'class' => $method::class,
             ], $activeMethods),
             'authForm' => $html,
-            'returnUrl' => $userSession->getReturnUrl($defaultReturnUrl),
+            'returnUrl' => $returnUrl,
         ];
 
         if ($this->request->getAcceptsJson()) {

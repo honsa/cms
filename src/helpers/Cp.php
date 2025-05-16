@@ -42,6 +42,7 @@ use craft\utilities\ProjectConfig as ProjectConfigUtility;
 use craft\utilities\Updates;
 use craft\web\twig\TemplateLoaderException;
 use craft\web\View;
+use DateTime;
 use Illuminate\Support\Collection;
 use yii\base\Event;
 use yii\base\InvalidArgumentException;
@@ -104,10 +105,10 @@ class Cp
     public const CHIP_SIZE_LARGE = 'large';
 
     /**
-     * @var Site|false
+     * @var Site|false|null
      * @see requestedSite()
      */
-    private static Site|false $_requestedSite;
+    private static Site|false|null $_requestedSite = null;
 
     /**
      * Renders a control panel template.
@@ -291,9 +292,7 @@ class Cp
                 break;
         }
 
-        $childTagHtml = array_map(function(array $childTagInfo): string {
-            return self::alertTagHtml($childTagInfo);
-        }, $tagInfo['children'] ?? []);
+        $childTagHtml = array_map(fn(array $childTagInfo): string => self::alertTagHtml($childTagInfo), $tagInfo['children'] ?? []);
 
         return trim(static::renderTemplate('_layouts/components/tag.twig', [
             'type' => $tagInfo['type'],
@@ -336,7 +335,7 @@ class Cp
             'autoReload' => true,
             'id' => sprintf('chip-%s', mt_rand()),
             'class' => null,
-            'hyperlink' => false,
+            'hyperlink' => true,
             'inputName' => null,
             'inputValue' => null,
             'labelHtml' => null,
@@ -367,6 +366,7 @@ class Cp
                 ...Html::explodeClass($config['class']),
             ],
             'style' => array_filter([
+                '--custom-border-color' => $color?->cssVar(200),
                 '--custom-bg-color' => $color?->cssVar(50),
                 '--custom-text-color' => $color?->cssVar(900),
                 '--custom-sel-bg-color' => $color?->cssVar(900),
@@ -421,7 +421,10 @@ class Cp
         } elseif ($config['showLabel']) {
             $labelHtml = Html::encode($component->getUiLabel());
             if ($config['hyperlink'] && $component instanceof CpEditable) {
-                $labelHtml = Html::a($labelHtml, $component->getCpEditUrl());
+                $url = $component->getCpEditUrl();
+                if ($url) {
+                    $labelHtml = Html::a($labelHtml, $url);
+                }
             }
             $labelHtml = Html::tag('div', $labelHtml);
             if ($config['showHandle']) {
@@ -464,11 +467,16 @@ class Cp
             $html .= self::componentActionMenu($component);
         }
         if ($config['sortable']) {
-            $html .= Html::button('', [
-                'class' => ['move', 'icon'],
-                'title' => Craft::t('app', 'Reorder'),
-                'aria' => [
-                    'label' => Craft::t('app', 'Reorder'),
+            $html .= static::buttonHtml([
+                'class' => ['chromeless', 'small', 'move-btn'],
+                'icon' => 'move',
+                'attributes' => [
+                    'title' => Craft::t('app', 'Reorder'),
+                    'aria' => [
+                        'label' => Craft::t('app', 'Reorder'),
+                    ],
+                    'role' => 'none',
+                    'tabindex' => '-1',
                 ],
             ]);
         }
@@ -603,11 +611,49 @@ class Cp
             'autoReload' => true,
             'context' => 'index',
             'id' => sprintf('card-%s', mt_rand()),
+            'hyperlink' => true,
             'inputName' => null,
             'selectable' => false,
+            'showEditButton' => true,
             'showActionMenu' => false,
             'sortable' => false,
         ];
+
+        $showEditButton = $config['showEditButton'] && Craft::$app->getElements()->canView($element);
+
+        if ($showEditButton) {
+            $editId = sprintf('action-edit-%s', mt_rand());
+            $view = Craft::$app->getView();
+            $view->registerJsWithVars(fn($id, $elementType, $settings, $cpEditUrl) => <<<JS
+$('#' + $id).on('activate', (ev) => {
+  if ($cpEditUrl && Garnish.isCtrlKeyPressed(ev.originalEvent)) {
+    window.open($cpEditUrl);
+  } else {
+    // focus on the button so that when the slideout is closed, it's returned to the button
+    $(ev.currentTarget).focus();
+
+    const settings = $settings;
+    // if settings have draftId but the replaced card doesn't have the data-draft-id attribute anymore,
+    // remove the draftId from the settings before creating element editor, so the correct element can be retrieved
+    if (settings.draftId && !Garnish.hasAttr($(ev.currentTarget).parents('.card'), 'data-draft-id')) {
+      delete settings.draftId;
+    }
+    Craft.createElementEditor($elementType, settings);
+  }
+});
+JS, [
+                $view->namespaceInputId($editId),
+                $element::class,
+                [
+                    'elementId' => $element->isProvisionalDraft ? $element->getCanonicalId() : $element->id,
+                    'draftId' => $element->isProvisionalDraft ? null : $element->draftId,
+                    'revisionId' => $element->revisionId,
+                    'siteId' => $element->siteId,
+                    'ownerId' => $element instanceof NestedElementInterface ? $element->getOwnerId() : null,
+                ],
+                'cpEditUrl' => $element->getCpEditUrl(),
+            ]);
+        }
 
         if ($element->getIsRevision()) {
             $config['showActionMenu'] = false;
@@ -626,12 +672,16 @@ class Cp
             [
                 'class' => $classes,
                 'style' => array_filter([
+                    '--custom-border-color' => $color?->cssVar(200),
+                    '--custom-titlebar-bg-color' => $color?->cssVar(100),
                     '--custom-bg-color' => $color?->cssVar(50),
                     '--custom-text-color' => $color?->cssVar(900),
-                    '--custom-sel-bg-color' => $color?->cssVar(900),
+                    '--custom-sel-titlebar-bg-color' => $color?->cssVar(900),
+                    '--custom-sel-bg-color' => $color?->cssVar(800),
                 ]),
                 'data' => array_filter([
                     'settings' => $config['autoReload'] ? [
+                        'hyperlink' => $config['hyperlink'],
                         'selectable' => $config['selectable'],
                         'context' => $config['context'],
                         'id' => Craft::$app->getView()->namespaceInputId($config['id']),
@@ -689,40 +739,67 @@ class Cp
                 Html::endTag('div');
         }
 
-        $thumb = $element->getThumbHtml(128);
-        if ($thumb === null && $element instanceof Iconic) {
-            $icon = $element->getIcon();
-            if ($icon) {
-                $thumb = Html::tag('div', Cp::iconSvg($icon), [
-                    'class' => array_filter([
-                        'cp-icon',
-                        $element instanceof Colorable ? $element->getColor()?->value : null,
-                    ]),
-                    'aria' => ['hidden' => true],
-                ]);
-            }
-        }
+        $thumb = $element->getThumbHtml(120);
+        $icon = $element instanceof Iconic ? $element->getIcon() : null;
+        $title = $element->getCardTitle();
 
         $html = Html::beginTag('div', $attributes) .
+            Html::beginTag('div', ['class' => 'card-titlebar']) .
+            Html::beginTag('div', [
+                'class' => ['flex', 'flex-nowrap', 'flex-gap-s'],
+            ]) .
+            ($icon ? Html::tag('div', Cp::iconSvg($icon), [
+                'class' => array_filter([
+                    'cp-icon',
+                    'small',
+                    $element instanceof Colorable ? $element->getColor()?->value : null,
+                ]),
+                'aria' => ['hidden' => true],
+            ]) : '') .
+            ($title ? Html::tag('div', Html::encode($title), ['class' => 'card-titlebar-label']) : '') .
+            Html::endTag('div') . // .flex
             ($status ?? '') .
-            ($thumb ?? '') .
+            Html::beginTag('div', ['class' => 'card-actions-container']) .
+            Html::beginTag('div', ['class' => 'card-actions']) .
+            ($config['selectable'] ? self::componentCheckboxHtml(sprintf('%s-label', $config['id'])) : '') .
+            ($showEditButton ? static::buttonHtml([
+                'class' => ['chromeless', 'small', 'edit-btn'],
+                'icon' => 'edit',
+                'attributes' => [
+                    'id' => $editId,
+                    'title' => StringHelper::upperCaseFirst(Craft::t('app', 'Edit {type}', [
+                        'type' => $element::lowerDisplayName(),
+                    ])),
+                    'aria' => [
+                        'label' => StringHelper::upperCaseFirst(Craft::t('app', 'Edit {type}', [
+                            'type' => $element::lowerDisplayName(),
+                        ])),
+                    ],
+                ],
+            ]) : '') .
+            ($config['showActionMenu'] ? self::componentActionMenu($element, !$showEditButton) : '') .
+            ($config['sortable'] ? static::buttonHtml([
+                'class' => ['chromeless', 'small', 'move-btn'],
+                'icon' => 'move',
+                'attributes' => [
+                    'title' => Craft::t('app', 'Reorder'),
+                    'aria' => [
+                        'label' => Craft::t('app', 'Reorder'),
+                    ],
+                    'role' => 'none',
+                    'tabindex' => '-1',
+                ],
+            ]) : '') .
+            Html::endTag('div') . // .card-actions
+            Html::endTag('div') . // .card-actions-container
+            Html::endTag('div') . // .card-titlebar
+            Html::beginTag('div', ['class' => 'card-main']) .
             Html::beginTag('div', ['class' => 'card-content']) .
             ($headingContent !== '' ? Html::tag('div', $headingContent, ['class' => 'card-heading']) : '') .
             ($bodyContent !== '' ? Html::tag('div', $bodyContent, ['class' => 'card-body']) : '') .
             Html::endTag('div') . // .card-content
-            Html::beginTag('div', ['class' => 'card-actions-container']) .
-            Html::beginTag('div', ['class' => 'card-actions']) .
-            ($config['selectable'] ? self::componentCheckboxHtml(sprintf('%s-label', $config['id'])) : '') .
-            ($config['showActionMenu'] ? self::componentActionMenu($element) : '') .
-            ($config['sortable'] ? Html::button('', [
-                'class' => ['move', 'icon'],
-                'title' => Craft::t('app', 'Reorder'),
-                'aria' => [
-                    'label' => Craft::t('app', 'Reorder'),
-                ],
-            ]) : '') .
-            Html::endTag('div') . // .card-actions
-            Html::endTag('div'); // .card-actions-container
+            ($thumb ?? '') .
+            Html::endTag('div'); // .card-main
 
         if ($config['context'] === 'field' && $config['inputName'] !== null) {
             $inputValue = $element->isProvisionalDraft ? $element->getCanonicalId() : $element->id;
@@ -935,6 +1012,7 @@ class Cp
                     'owner-id' => $element instanceof NestedElementInterface ? $element->getOwnerId() : null,
                     'owner-is-canonical' => self::elementOwnerIsCanonical($element),
                     'site-id' => $element->siteId,
+                    'is-unpublished-draft' => $element->getIsUnpublishedDraft(),
                     'status' => $element->getStatus(),
                     'label' => (string)$element,
                     'url' => $element->getUrl(),
@@ -942,9 +1020,10 @@ class Cp
                     'level' => $element->level,
                     'trashed' => $element->trashed,
                     'editable' => $editable,
-                    'savable' => $editable && self::contextIsAdministrative($config['context']) && $elementsService->canSave($element),
-                    'duplicatable' => $editable && self::contextIsAdministrative($config['context']) && $elementsService->canDuplicate($element),
-                    'deletable' => $editable && self::contextIsAdministrative($config['context']) && $elementsService->canDelete($element),
+                    'savable' => $editable && self::contextIsAdministrative($config['context']) && $elementsService->canSave($element, $user),
+                    'duplicatable' => $editable && self::contextIsAdministrative($config['context']) && $elementsService->canDuplicate($element, $user),
+                    'copyable' => $editable && self::contextIsAdministrative($config['context']) && $elementsService->canCopy($element, $user),
+                    'deletable' => $editable && self::contextIsAdministrative($config['context']) && $elementsService->canDelete($element, $user),
                 ]),
             ],
         );
@@ -1005,16 +1084,29 @@ class Cp
         }
 
         // the inner span is needed for `text-overflow: ellipsis` (e.g. within breadcrumbs)
-        $content = ($content !== '' ? Html::tag('a', Html::tag('span', $content), [
-                'class' => ['label-link'],
-                'href' => !$element->trashed && $config['context'] !== 'modal'
-                    ? ($attributes['data']['cp-url'] ?? null) : null,
-            ]) : '') .
-            ($config['context'] === 'field' && $element->hasErrors() ? Html::tag('span', '', [
+        if ($content !== '') {
+            if (
+                ($config['hyperlink'] ?? true) &&
+                !$element->trashed &&
+                $config['context'] !== 'modal' &&
+                ($url = $attributes['data']['cp-url'] ?? null)
+            ) {
+                $content = Html::tag('a', Html::tag('span', $content), [
+                    'class' => ['label-link'],
+                    'href' => $url,
+                ]);
+            } else {
+                $content = Html::tag('span', $content, ['class' => 'label-link']);
+            }
+        }
+
+        if ($config['context'] === 'field' && $element->hasErrors()) {
+            $content .= Html::tag('span', '', [
                 'data' => ['icon' => 'triangle-exclamation'],
                 'aria' => ['label' => Craft::t('app', 'Error')],
                 'role' => 'img',
-            ]) : '');
+            ]);
+        }
 
         if ($content === '') {
             return '';
@@ -1026,33 +1118,39 @@ class Cp
         ]);
     }
 
-    private static function componentActionMenu(Actionable $component): string
+    private static function componentActionMenu(Actionable $component, bool $withEdit = true): string
     {
         return Craft::$app->getView()->namespaceInputs(
-            function() use ($component): string {
+            function() use ($component, $withEdit): string {
                 $actionMenuItems = array_filter(
                     $component->getActionMenuItems(),
                     fn(array $item) => $item['showInChips'] ?? !($item['destructive'] ?? false)
                 );
 
-                if (empty($actionMenuItems)) {
-                    return '';
-                }
-
-                foreach ($actionMenuItems as &$item) {
+                foreach ($actionMenuItems as $i => &$item) {
                     if (str_starts_with($item['id'] ?? '', 'action-edit-')) {
-                        $item['attributes']['data']['edit-action'] = true;
-                        break;
+                        if (!$withEdit) {
+                            unset($actionMenuItems[$i]);
+                        } else {
+                            $item['attributes']['data']['edit-action'] = true;
+                        }
+                    } elseif (str_starts_with($item['id'] ?? '', 'action-copy-')) {
+                        $item['attributes']['data']['copy-action'] = true;
                     }
                 }
 
                 return static::disclosureMenu($actionMenuItems, [
                     'hiddenLabel' => Craft::t('app', 'Actions'),
                     'buttonAttributes' => [
-                        'class' => ['action-btn'],
+                        'class' => array_keys(array_filter([
+                            'action-btn' => true,
+                            'small' => true,
+                            'hidden' => empty($actionMenuItems),
+                        ])),
                         'removeClass' => 'menubtn',
                         'data' => ['icon' => 'ellipsis'],
                     ],
+                    'omitIfEmpty' => false,
                 ]);
             },
             sprintf('action-menu-%s', mt_rand()),
@@ -1263,6 +1361,7 @@ class Cp
             ])
             ->values()
             ->all();
+        $sortOptionsKey = 'baseSortOptions';
 
         $tableColumns = Craft::$app->getElementSources()->getAvailableTableAttributes($elementType);
 
@@ -1350,6 +1449,9 @@ class Cp
                         'defaultDir' => $option['defaultDir'],
                     ], $elementSourcesService->getSortOptionsForFieldLayouts($config['fieldLayouts'])),
                 );
+                // Don't let sources.twig merge sortOptions with anything else!
+                $sortOptionsKey = 'sortOptions';
+
                 $tableColumns = array_merge(
                     $tableColumns,
                     $elementSourcesService->getTableAttributesForFieldLayouts($config['fieldLayouts']),
@@ -1410,7 +1512,7 @@ JS, [
             Html::tag('nav', $view->renderTemplate('_elements/sources', [
                 'elementType' => $elementType,
                 'sources' => $sources,
-                'baseSortOptions' => $sortOptions,
+                $sortOptionsKey => $sortOptions,
                 'tableColumns' => $tableColumns,
                 'defaultTableColumns' => $config['defaultTableColumns'],
             ], View::TEMPLATE_MODE_CP)) .
@@ -1459,7 +1561,7 @@ JS, [
     public static function fieldHtml(string|callable $input, array $config = []): string
     {
         $attribute = $config['attribute'] ?? $config['id'] ?? null;
-        $id = $config['id'] = $config['id'] ?? 'field' . mt_rand();
+        $id = $config['id'] ??= 'field' . mt_rand();
         $labelId = $config['labelId'] ?? "$id-label";
         $instructionsId = $config['instructionsId'] ?? "$id-instructions";
         $tipId = $config['tipId'] ?? "$id-tip";
@@ -1700,6 +1802,19 @@ JS, [
     }
 
     /**
+     * Renders a button’s HTML.
+     *
+     * @param array $config
+     * @return string
+     * @throws InvalidArgumentException
+     * @since 5.7.0
+     */
+    public static function buttonHtml(array $config): string
+    {
+        return static::renderTemplate('_includes/forms/button.twig', $config);
+    }
+
+    /**
      * Renders a checkbox field’s HTML.
      *
      * Note that unlike the `checkboxField` macro in `_includes/forms.html`, you must set the checkbox label via
@@ -1712,11 +1827,11 @@ JS, [
      */
     public static function checkboxFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'checkbox' . mt_rand();
+        $config['id'] ??= 'checkbox' . mt_rand();
 
         $config['fieldClass'] = Html::explodeClass($config['fieldClass'] ?? []);
         $config['fieldClass'][] = 'checkboxfield';
-        $config['instructionsPosition'] = $config['instructionsPosition'] ?? 'after';
+        $config['instructionsPosition'] ??= 'after';
 
         // Don't pass along `label` since it's ambiguous
         unset($config['label']);
@@ -1734,7 +1849,7 @@ JS, [
      */
     public static function checkboxSelectFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'checkboxselect' . mt_rand();
+        $config['id'] ??= 'checkboxselect' . mt_rand();
         $config['fieldset'] = true;
         return static::fieldHtml('template:_includes/forms/checkboxSelect.twig', $config);
     }
@@ -1760,7 +1875,7 @@ JS, [
      */
     public static function checkboxGroupFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'checkboxgroup' . mt_rand();
+        $config['id'] ??= 'checkboxgroup' . mt_rand();
         return static::fieldHtml('template:_includes/forms/checkboxGroup.twig', $config);
     }
 
@@ -1787,7 +1902,7 @@ JS, [
      */
     public static function colorFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'color' . mt_rand();
+        $config['id'] ??= 'color' . mt_rand();
         $config['fieldset'] = true;
         return static::fieldHtml('template:_includes/forms/color.twig', $config);
     }
@@ -1801,7 +1916,7 @@ JS, [
      */
     public static function colorSelectFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'colorselect' . mt_rand();
+        $config['id'] ??= 'colorselect' . mt_rand();
         return static::fieldHtml('template:_includes/forms/colorSelect.twig', $config);
     }
 
@@ -1826,7 +1941,7 @@ JS, [
      */
     public static function iconPickerFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'iconpicker' . mt_rand();
+        $config['id'] ??= 'iconpicker' . mt_rand();
         return static::fieldHtml('template:_includes/forms/iconPicker.twig', $config);
     }
 
@@ -1840,7 +1955,7 @@ JS, [
      */
     public static function editableTableFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'editabletable' . mt_rand();
+        $config['id'] ??= 'editabletable' . mt_rand();
         return static::fieldHtml('template:_includes/forms/editableTable.twig', $config);
     }
 
@@ -1867,13 +1982,13 @@ JS, [
      */
     public static function lightswitchFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'lightswitch' . mt_rand();
+        $config['id'] ??= 'lightswitch' . mt_rand();
 
         $config['fieldClass'] = Html::explodeClass($config['fieldClass'] ?? []);
         $config['fieldClass'][] = 'lightswitch-field';
 
         // Don't pass along `label` since it's ambiguous
-        $config['fieldLabel'] = $config['fieldLabel'] ?? $config['label'] ?? null;
+        $config['fieldLabel'] ??= $config['label'] ?? null;
         unset($config['label']);
 
         return static::fieldHtml('template:_includes/forms/lightswitch.twig', $config);
@@ -1902,7 +2017,7 @@ JS, [
      */
     public static function rangeFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'range' . mt_rand();
+        $config['id'] ??= 'range' . mt_rand();
         return static::fieldHtml('template:_includes/forms/range.twig', $config);
     }
 
@@ -1929,7 +2044,7 @@ JS, [
      */
     public static function moneyFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'money' . mt_rand();
+        $config['id'] ??= 'money' . mt_rand();
         return static::fieldHtml('template:_includes/forms/money.twig', $config);
     }
 
@@ -1955,7 +2070,7 @@ JS, [
      */
     public static function selectFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'select' . mt_rand();
+        $config['id'] ??= 'select' . mt_rand();
         return static::fieldHtml('template:_includes/forms/select.twig', $config);
     }
 
@@ -1980,7 +2095,7 @@ JS, [
      */
     public static function customSelectFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'customselect' . mt_rand();
+        $config['id'] ??= 'customselect' . mt_rand();
         return static::fieldHtml('template:_includes/forms/customSelect.twig', $config);
     }
 
@@ -2006,7 +2121,7 @@ JS, [
      */
     public static function selectizeFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'selectize' . mt_rand();
+        $config['id'] ??= 'selectize' . mt_rand();
         return static::fieldHtml('template:_includes/forms/selectize.twig', $config);
     }
 
@@ -2032,7 +2147,7 @@ JS, [
      */
     public static function multiSelectFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'multiselect' . mt_rand();
+        $config['id'] ??= 'multiselect' . mt_rand();
         return static::fieldHtml('template:_includes/forms/multiselect.twig', $config);
     }
 
@@ -2059,7 +2174,7 @@ JS, [
      */
     public static function textFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'text' . mt_rand();
+        $config['id'] ??= 'text' . mt_rand();
         return static::fieldHtml('template:_includes/forms/text.twig', $config);
     }
 
@@ -2086,7 +2201,7 @@ JS, [
      */
     public static function textareaFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'textarea' . mt_rand();
+        $config['id'] ??= 'textarea' . mt_rand();
         return static::fieldHtml('template:_includes/forms/textarea.twig', $config);
     }
 
@@ -2113,7 +2228,7 @@ JS, [
      */
     public static function dateFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'date' . mt_rand();
+        $config['id'] ??= 'date' . mt_rand();
         return static::fieldHtml('template:_includes/forms/date.twig', $config);
     }
 
@@ -2140,7 +2255,7 @@ JS, [
      */
     public static function timeFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'time' . mt_rand();
+        $config['id'] ??= 'time' . mt_rand();
         return static::fieldHtml('template:_includes/forms/time.twig', $config);
     }
 
@@ -2184,7 +2299,7 @@ JS, [
      */
     public static function elementSelectFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'elementselect' . mt_rand();
+        $config['id'] ??= 'elementselect' . mt_rand();
         return static::fieldHtml('template:_includes/forms/elementSelect.twig', $config);
     }
 
@@ -2209,7 +2324,7 @@ JS, [
      */
     public static function entryTypeSelectFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'entrytypeselect' . mt_rand();
+        $config['id'] ??= 'entrytypeselect' . mt_rand();
         return static::fieldHtml('template:_includes/forms/entryTypeSelect.twig', $config);
     }
 
@@ -2223,7 +2338,7 @@ JS, [
      */
     public static function autosuggestFieldHtml(array $config): string
     {
-        $config['id'] = $config['id'] ?? 'autosuggest' . mt_rand();
+        $config['id'] ??= 'autosuggest' . mt_rand();
 
         // Suggest an environment variable / alias?
         if ($config['suggestEnvVars'] ?? false) {
@@ -2546,6 +2661,7 @@ JS, [
         $selectedCardAttributes = $fieldLayout->getCardBodyAttributes();
 
         // get remaining attributes
+        /** @var class-string<ElementInterface> $elementType */
         $elementType = new ($fieldLayout['type']);
         $remainingItems = $elementType::cardAttributes();
         foreach ($remainingItems as $key => $cardAttributes) {
@@ -2583,9 +2699,7 @@ JS, [
 
         // make sure we don't have any cardViewValues that are no longer allowed to show in cards
         $cardViewValues = $fieldLayout->getCardView();
-        $cardViewValues = array_filter($cardViewValues, function($value) use ($selectedOptions) {
-            return isset($selectedOptions[$value]);
-        });
+        $cardViewValues = array_filter($cardViewValues, fn($value) => isset($selectedOptions[$value]));
 
         // sort all selected options by the cardView order
         $selectedOptions = array_replace(
@@ -2673,25 +2787,12 @@ JS, [
                 'class' => ['element', 'card'],
             ]);
 
-        // get thumb placeholder
-        if ($showThumb ?? $fieldLayout->getThumbField() !== null) {
-            $previewThumb = Html::tag('div',
-                Html::tag('div', Cp::iconSvg('image'), ['class' => 'cp-icon']),
-                ['class' => 'cvd-thumbnail']
-            );
-
-            $previewHtml .= Html::tag('div', $previewThumb, ['class' => ['thumb']]);
-        }
-
-
         $previewHtml .=
-            Html::beginTag('div', [
-                'class' => ['card-content'],
-            ]) .
+            Html::tag('div', options: ['class' => 'card-titlebar']) .
+            Html::beginTag('div', ['class' => 'card-main']) .
+            Html::beginTag('div', ['class' => 'card-content']) .
             Html::tag('div', $heading, ['class' => 'card-heading']) .
-            Html::beginTag('div', [
-                'class' => 'card-body',
-            ]);
+            Html::beginTag('div', ['class' => 'card-body']);
 
         // get body elements (fields and attributes)
         $cardElements = $fieldLayout->getCardBodyElements(null, $cardElements);
@@ -2719,7 +2820,20 @@ JS, [
 
         $previewHtml .=
             Html::endTag('div') . // .card-body
-            Html::endTag('div') . // .card-content
+            Html::endTag('div'); // .card-content
+
+        // get thumb placeholder
+        if ($showThumb ?? $fieldLayout->getThumbField() !== null) {
+            $previewThumb = Html::tag('div',
+                Html::tag('div', Cp::iconSvg('image'), ['class' => 'cp-icon']),
+                ['class' => 'cvd-thumbnail']
+            );
+
+            $previewHtml .= Html::tag('div', $previewThumb, ['class' => ['thumb']]);
+        }
+
+        $previewHtml .=
+            Html::endTag('div') . // .card-main
             Html::tag('div', '', ['class' => 'spinner spinner-absolute']) .
             Html::endTag('div'); // .element.card
 
@@ -2808,7 +2922,18 @@ JS;
         // Don't call FieldLayout::getConfig() here because we want to include *all* tabs, not just non-empty ones
         $fieldLayoutConfig = [
             'uid' => $fieldLayout->uid,
-            'tabs' => array_map(fn(FieldLayoutTab $tab) => $tab->getConfig(), $tabs),
+            'tabs' => array_map(function(FieldLayoutTab $tab) {
+                $config = $tab->getConfig();
+                foreach ($config['elements'] as &$elementConfig) {
+                    if (!isset($elementConfig['dateAdded'])) {
+                        // Default `dateAdded` to a minute ago, so there’s no chance that an element that predated 5.3 would get
+                        // the same timestamp as a newly-added element, if the layout was saved within a minute of being edited,
+                        // after updating to Craft 5.3+.
+                        $elementConfig['dateAdded'] = DateTimeHelper::toIso8601((new DateTime())->modify('-1 minute'));
+                    }
+                }
+                return $config;
+            }, $tabs),
         ];
 
         if ($fieldLayout->id) {
@@ -3302,14 +3427,18 @@ JS;
      *
      * System icons can be found in `src/icons/solid/`.
      *
-     * @param string $icon
+     * @param string|null $icon
      * @param string|null $fallbackLabel
      * @param string|null $altText
-     * @return string
+     * @return string|null
      * @since 5.0.0
      */
-    public static function iconSvg(string $icon, ?string $fallbackLabel = null, ?string $altText = null): string
+    public static function iconSvg(?string $icon, ?string $fallbackLabel = null, ?string $altText = null): ?string
     {
+        if ($icon === null) {
+            return null;
+        }
+
         $locale = Craft::$app->getLocale();
         $orientation = $locale->getOrientation();
         $attributes = [
@@ -3381,7 +3510,7 @@ JS;
 
         try {
             // system icon name?
-            if (preg_match('/^[a-z\-]+(\d?)$/', $icon)) {
+            if (preg_match('/^[\da-z\-]+$/', $icon)) {
                 $path = match ($icon) {
                     'asterisk-slash',
                     'diamond-slash',
@@ -3517,15 +3646,28 @@ JS;
             Html::beginTag('div', [
                 'class' => 'content-notice',
             ]) .
-            Html::tag('div', '', [
+            Html::beginTag('div', [
                 'class' => ['content-notice-icon'],
                 'aria' => ['hidden' => 'true'],
-                'data' => ['icon' => 'lightbulb'],
             ]) .
+            Html::tag('div', Cp::iconSvg('gear-slash'), [
+                'class' => 'cp-icon',
+            ]) .
+            Html::endTag('div') .
             Html::tag('p', Craft::t(
                 'app',
                 'Changes to these settings aren’t permitted in this environment.',
             )) .
             Html::endTag('div');
+    }
+
+    /**
+     * Resets [[requestedSite()]].
+     *
+     * @since 5.7.0
+     */
+    public static function reset(): void
+    {
+        self::$_requestedSite = null;
     }
 }

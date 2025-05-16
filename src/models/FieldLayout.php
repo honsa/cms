@@ -741,7 +741,7 @@ class FieldLayout extends Model
     }
 
     /**
-     * Returns the visible custom fields included in the layout, taking conditions into account.
+     * Returns the custom fields included in the layout, taking visibility conditions into account.
      *
      * @param ElementInterface $element
      * @return FieldInterface[]
@@ -749,7 +749,22 @@ class FieldLayout extends Model
      */
     public function getVisibleCustomFields(ElementInterface $element): array
     {
-        return $this->_customFields($element);
+        return $this->_customFields(element: $element);
+    }
+
+    /**
+     * Returns the custom fields included in the layout, taking editability conditions into account.
+     *
+     * @param ElementInterface $element
+     * @return FieldInterface[]
+     * @since 5.7.0
+     */
+    public function getEditableCustomFields(ElementInterface $element): array
+    {
+        return $this->_customFields(
+            fn(CustomField $layoutElement) => $layoutElement->editable(),
+            $element,
+        );
     }
 
     /**
@@ -866,9 +881,7 @@ class FieldLayout extends Model
         $cardViewValues = $this->getCardView();
 
         // make sure we don't have any cardViewValues that are no longer allowed to show in cards
-        $cardViewValues = array_filter($cardViewValues, function($value) use ($elements) {
-            return isset($elements[$value]);
-        });
+        $cardViewValues = array_filter($cardViewValues, fn($value) => isset($elements[$value]));
 
         // return elements in the order specified in the config
         return array_replace(
@@ -878,15 +891,19 @@ class FieldLayout extends Model
     }
 
     /**
+     * @param callable|null $filter
      * @param ElementInterface|null $element
      * @return FieldInterface[]
      */
-    private function _customFields(?ElementInterface $element = null): array
+    private function _customFields(?callable $filter = null, ?ElementInterface $element = null): array
     {
         return array_map(
             fn(CustomField $layoutElement) => $layoutElement->getField(),
             iterator_to_array($this->_elements(
-                fn(FieldLayoutElement $layoutElement) => $layoutElement instanceof CustomField,
+                fn(FieldLayoutElement $layoutElement) => (
+                    $layoutElement instanceof CustomField &&
+                    (!$filter || $filter($layoutElement))
+                ),
                 $element,
             )),
         );
@@ -1003,15 +1020,14 @@ class FieldLayout extends Model
                 if ($showTab && (!$isConditional || $layoutElement->showInForm($element))) {
                     // If it was already included and we just need the missing elements, only keep track that it’s still included
                     if (
+                        !$layoutElement->alwaysRefresh() &&
                         $visibleElements !== null &&
                         (!$isConditional || (isset($visibleElements[$tab->uid]) && in_array($layoutElement->uid, $visibleElements[$tab->uid])))
                     ) {
                         $layoutElements[] = [$layoutElement, $isConditional, true];
                         $hasVisibleFields = true;
                     } else {
-                        $html = $view->namespaceInputs(function() use ($layoutElement, $element, $static) {
-                            return $layoutElement->formHtml($element, $static) ?? '';
-                        }, $namespace);
+                        $html = $view->namespaceInputs(fn() => $layoutElement->formHtml($element, $static) ?? '', $namespace);
 
                         if ($html) {
                             $errorKey = null;
